@@ -25,10 +25,72 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ]]--
 
+--[[ Helper Functions ]]--
+
+local function file_exists(file)
+	if love then return love.filesystem.exists(file) end
+
+	local f = io.open(file, "r")
+	if f then f:close() end
+	return f ~= nil
+end
+
+-- http://wiki.interfaceware.com/534.html
+local function string_split(s, d)
+	local t = {}
+	local i = 0
+	local f
+	local match = '(.-)' .. d .. '()'
+	
+	if string.find(s, d) == nil then
+		return {s}
+	end
+	
+	for sub, j in string.gmatch(s, match) do
+		i = i + 1
+		t[i] = sub
+		f = j
+	end
+	
+	if i ~= 0 then
+		t[i+1] = string.sub(s, f)
+	end
+	
+	return t
+end
+
+local function merge_quoted(t)
+	local ret = {}
+	local merging = false
+	local buf = ""
+	for k, v in ipairs(t) do
+		local f, l = v:sub(1,1), v:sub(v:len())
+		if f == "\"" and l ~= "\"" then
+			merging = true
+			buf = v
+		else
+			if merging then
+				buf = buf .. " " .. v
+				if l == "\"" then
+					merging = false
+					table.insert(ret, buf:sub(2,-2))
+				end
+			else
+				table.insert(ret, v)
+			end
+		end
+	end
+	return ret
+end
+
+local function toboolean(v)
+	return (type(v) == "string" and v == "true") or (type(v) == "number" and v ~= 0) or (type(v) == "boolean" and v)
+end
+
 local path = ... .. "."
 local loader = {}
 
-loader.version = "0.0.1"
+loader.version = "0.0.2"
 
 function loader.load(file)
 	assert(file_exists(file), "File not found: " .. file)
@@ -390,68 +452,6 @@ function loader.frame(iqe, line)
 	local animation = iqe.animation[#iqe.animation]
 	animation.frame = animation.frame or {}
 	table.insert(animation.frame, {})
-end
-
---[[ Useful Functions ]]--
-
-function file_exists(file)
-	if love then return love.filesystem.exists(file) end
-
-	local f = io.open(file, "r")
-	if f then f:close() end
-	return f ~= nil
-end
-
--- http://wiki.interfaceware.com/534.html
-function string_split(s, d)
-	local t = {}
-	local i = 0
-	local f
-	local match = '(.-)' .. d .. '()'
-	
-	if string.find(s, d) == nil then
-		return {s}
-	end
-	
-	for sub, j in string.gmatch(s, match) do
-		i = i + 1
-		t[i] = sub
-		f = j
-	end
-	
-	if i ~= 0 then
-		t[i+1] = string.sub(s, f)
-	end
-	
-	return t
-end
-
-function merge_quoted(t)
-	local ret = {}
-	local merging = false
-	local buf = ""
-	for k, v in ipairs(t) do
-		local f, l = v:sub(1,1), v:sub(v:len())
-		if f == "\"" and l ~= "\"" then
-			merging = true
-			buf = v
-		else
-			if merging then
-				buf = buf .. " " .. v
-				if l == "\"" then
-					merging = false
-					table.insert(ret, buf:sub(2,-2))
-				end
-			else
-				table.insert(ret, v)
-			end
-		end
-	end
-	return ret
-end
-
-function toboolean(v)
-	return (type(v) == "string" and v == "true") or (type(v) == "number" and v ~= 0) or (type(v) == "boolean" and v)
 end
 
 return loader
