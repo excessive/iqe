@@ -53,7 +53,10 @@ local function merge_quoted(t)
 end
 
 local function toboolean(v)
-	return (type(v) == "string" and v == "true") or (type(v) == "string" and v == "1") or (type(v) == "number" and v ~= 0) or (type(v) == "boolean" and v)
+	return	(type(v) == "string" and v == "true") or
+			(type(v) == "string" and v == "1") or
+			(type(v) == "number" and v ~= 0) or
+			(type(v) == "boolean" and v)
 end
 
 local IQE = {}
