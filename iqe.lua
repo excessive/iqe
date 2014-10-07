@@ -98,7 +98,7 @@ end
 function IQE:mesh(line)
 	line = merge_quoted(line)
 	self.data.mesh = self.data.mesh or {}
-	self.data.mesh[line[1]] = {}
+	self.data.mesh[line[1]] = self.data.mesh[line[1]] or {}
 	self.current_mesh = self.data.mesh[line[1]]
 end
 
@@ -106,7 +106,7 @@ function IQE:material(line)
 	line = merge_quoted(line)
 	local mesh = self.current_mesh
 	mesh.material = mesh.material or {}
-	mesh.material[line[1]] = {}
+	mesh.material[line[1]] = mesh.material[line[1]] or {}
 	self.current_material = mesh.material[line[1]]
 end
 
