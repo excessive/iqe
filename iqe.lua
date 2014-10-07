@@ -107,10 +107,12 @@ function IQE:vp(line)
 	local mesh = self.current_mesh
 	mesh.vp = mesh.vp or {}
 	local vp = {}
-	vp.x = tonumber(line[1]) or 0
-	vp.y = tonumber(line[2]) or 0
-	vp.z = tonumber(line[3]) or 0
-	vp.w = tonumber(line[4]) or 1
+	for _, v in ipairs(line) do
+		table.insert(vp, tonumber(v))
+	end
+	if #vp == 3 then
+		table.insert(vp, 1)
+	end
 	table.insert(mesh.vp, vp)
 end
 
@@ -118,8 +120,9 @@ function IQE:vt(line)
 	local mesh = self.current_mesh
 	mesh.vt = mesh.vt or {}
 	local vt = {}
-	vt.u = tonumber(line[1]) or 0
-	vt.v = tonumber(line[2]) or 0
+	for _, v in ipairs(line) do
+		table.insert(vt, tonumber(v))
+	end
 	table.insert(mesh.vt, vt)
 end
 
@@ -127,44 +130,29 @@ function IQE:vn(line)
 	local mesh = self.current_mesh
 	mesh.vn = mesh.vn or {}
 	local vn = {}
-	vn.x = tonumber(line[1])
-	vn.y = tonumber(line[2])
-	vn.z = tonumber(line[3])
+	for _, v in ipairs(line) do
+		table.insert(vn, tonumber(v))
+	end
 	table.insert(mesh.vn, vn)
 end
 
 function IQE:vx(line)
 	local mesh = self.current_mesh
-	mesh.vp = mesh.vp or {}
-	local vp = {}
-	if not line[5] then
-		vp.x = tonumber(line[1])
-		vp.y = tonumber(line[2])
-		vp.z = tonumber(line[3])
-		vp.w = tonumber(line[4])
-	else
-		vp.x = tonumber(line[1])
-		vp.y = tonumber(line[2])
-		vp.z = tonumber(line[3])
-		vp.a = tonumber(line[4])
-		vp.b = tonumber(line[5])
-		vp.c = tonumber(line[6])
+	mesh.vx = mesh.vx or {}
+	local vx = {}
+	for _, v in ipairs(line) do
+		table.insert(vx, tonumber(v))
 	end
-	table.insert(mesh.vp, vp)
+	table.insert(mesh.vx, vx)
 end
 
 function IQE:vb(line)
 	local mesh = self.current_mesh
 	mesh.vb = mesh.vb or {}
 	local vb = {}
-	vb.ai = tonumber(line[1])
-	vb.aw = tonumber(line[2])
-	vb.bi = tonumber(line[3])
-	vb.bw = tonumber(line[4])
-	vb.ci = tonumber(line[5])
-	vb.cw = tonumber(line[6])
-	vb.di = tonumber(line[7])
-	vb.dw = tonumber(line[8])
+	for _, v in ipairs(line) do
+		table.insert(vb, tonumber(v))
+	end
 	table.insert(mesh.vb, vb)
 end
 
@@ -172,10 +160,12 @@ function IQE:vc(line)
 	local mesh = self.current_mesh
 	mesh.vc = mesh.vc or {}
 	local vc = {}
-	vc.r = tonumber(line[1]) or 0
-	vc.g = tonumber(line[2]) or 0
-	vc.b = tonumber(line[3]) or 0
-	vc.a = tonumber(line[4]) or 1
+	for _, v in ipairs(line) do
+		table.insert(vc, tonumber(v))
+	end
+	if #vc == 3 then
+		table.insert(vc, 1)
+	end
 	table.insert(mesh.vc, vc)
 end
 
@@ -183,12 +173,11 @@ function IQE:v0(line, cmd)
 	cmd = cmd or "v0"
 	local mesh = self.current_mesh
 	mesh[cmd] = mesh[cmd] or {}
-	local v = {}
-	v.x = tonumber(line[1]) or 0
-	v.y = tonumber(line[2]) or 0
-	v.z = tonumber(line[3]) or 0
-	v.w = tonumber(line[4]) or 0
-	table.insert(mesh[cmd], v)
+	local v0 = {}
+	for _, v in ipairs(line) do
+		table.insert(v0, tonumber(v))
+	end
+	table.insert(mesh[cmd], v0)
 end
 
 function IQE:v1(line)
@@ -316,16 +305,15 @@ end
 
 function IQE:pq(line)
 	local pq = {}
-	pq.tx = tonumber(line[1])
-	pq.ty = tonumber(line[2])
-	pq.tz = tonumber(line[3])
-	pq.qx = tonumber(line[4])
-	pq.qy = tonumber(line[5])
-	pq.qz = tonumber(line[6])
-	pq.qw = tonumber(line[7]) or -1
-	pq.sx = tonumber(line[8]) or 1
-	pq.sy = tonumber(line[9]) or 1
-	pq.sz = tonumber(line[10]) or 1
+	for _, v in ipairs(line) do
+		table.insert(pq, tonumber(v))
+	end
+	if #pq == 6 then
+		table.insert(pq, -1)
+		table.insert(pq, 1)
+		table.insert(pq, 1)
+		table.insert(pq, 1)
+	end
 
 	local joint
 	if not self.current_animation then
@@ -340,21 +328,14 @@ end
 
 function IQE:pm(line)
 	local pm = {}
-	pm.tx = tonumber(line[1])
-	pm.ty = tonumber(line[2])
-	pm.tz = tonumber(line[3])
-	pm.ax = tonumber(line[4])
-	pm.ay = tonumber(line[5])
-	pm.az = tonumber(line[6])
-	pm.bx = tonumber(line[7])
-	pm.by = tonumber(line[8])
-	pm.bz = tonumber(line[9])
-	pm.cx = tonumber(line[10])
-	pm.cy = tonumber(line[11])
-	pm.cz = tonumber(line[12])
-	pm.sx = tonumber(line[13]) or 1
-	pm.sy = tonumber(line[14]) or 1
-	pm.sz = tonumber(line[15]) or 1
+	for _, v in ipairs(line) do
+		table.insert(pm, tonumber(v))
+	end
+	if #pm == 12 then
+		table.insert(pm, 1)
+		table.insert(pm, 1)
+		table.insert(pm, 1)
+	end
 
 	local joint
 	if not self.current_animation then
@@ -369,15 +350,14 @@ end
 
 function IQE:pa(line)
 	local pa = {}
-	pa.tx = tonumber(line[1])
-	pa.ty = tonumber(line[2])
-	pa.tz = tonumber(line[3])
-	pa.rx = tonumber(line[4])
-	pa.ry = tonumber(line[5])
-	pa.rz = tonumber(line[6])
-	pa.sx = tonumber(line[7]) or 1
-	pa.sy = tonumber(line[8]) or 1
-	pa.sz = tonumber(line[9]) or 1
+	for _, v in ipairs(line) do
+		table.insert(pa, tonumber(v))
+	end
+	if #pm == 6 then
+		table.insert(pa, 1)
+		table.insert(pa, 1)
+		table.insert(pa, 1)
+	end
 
 	local joint
 	if not self.current_animation then
