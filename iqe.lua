@@ -29,7 +29,7 @@ local path = ... .. "."
 local loader = {}
 local IQE = {}
 
-loader.version = "0.1.1"
+loader.version = "0.1.2"
 
 --[[ Helper Functions ]]--
 
@@ -498,7 +498,7 @@ end
 
 function IQE:framerate(line)
 	local animation = self.current_animation
-	animation.framerate = tonumber(line[2])
+	animation.framerate = tonumber(line[1])
 end
 
 function IQE:frame(line)
@@ -562,7 +562,7 @@ function IQE:buffer()
 				"float", 3,
 				"float", 2,
 				"byte", 4, -- bone indices
-				"byte", 4 -- bone weight
+				"float", 4 -- bone weight
 			}
 
 			local data = {}
@@ -622,13 +622,19 @@ function IQE:buffer()
 
 			m:setVertexAttribute("v_position", buffer, 1)
 			m:setVertexAttribute("v_normal", buffer, 2)
+			m:setVertexAttribute("v_bone", buffer, 3)
+			m:setVertexAttribute("v_weight", buffer, 4)
 			m:setVertexMap(tris)
 		end
 	end
 end
 
 function IQE:update(dt)
+	self.timer:update(dt)
 
+	if self.animation then
+
+	end
 end
 
 function IQE:draw()
@@ -646,6 +652,22 @@ function IQE:draw()
 		end
 		love.graphics.setShader()
 	end
+end
+
+function IQE:animate(animation, Timer)
+	self.timer = self.timer or assert(Timer.new(), "No timer loaded. vrld's HUMP.Timer recommended.")
+	local ani = assert(self.data.animation[animation], string.format("No such animation: %s", animation))
+
+	self.animation = {}
+	self.animation.name = animation
+	self.animation.frame = ani.frame
+	self.animation.framerate = ani.framerate
+	self.animation.loop = ani.loop
+	self.animation.current_frame = 1
+end
+
+function IQE:next_frame()
+	self.timer:tween() -- recursive
 end
 
 return loader
