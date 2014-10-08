@@ -39,7 +39,7 @@ local path = ... .. "."
 local IQE = require(path .. "iqe")
 local loader = {}
 
-loader.version = "0.0.7"
+loader.version = "0.1.0"
 
 function loader.load(file)
 	assert(file_exists(file), "File not found: " .. file)

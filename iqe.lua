@@ -71,6 +71,19 @@ function IQE:init(lines)
 	self.current_vertexarray = false
 	self.data = {}
 	self:parse()
+
+	if love then
+		math.random = love.math.random
+		self:load_shader()
+		if love.graphics.newVertexBuffer then
+			self:buffer()
+		end
+	end
+end
+
+function IQE:load_shader()
+	local glsl = love.filesystem.read("assets/shader.glsl")
+	self.shader = love.graphics.newShader(glsl, glsl)
 end
 
 function IQE:parse()
@@ -97,24 +110,23 @@ end
 
 function IQE:mesh(line)
 	line = merge_quoted(line)
-	self.data.mesh = self.data.mesh or {}
-	self.data.mesh[line[1]] = self.data.mesh[line[1]] or {}
-	self.current_mesh = self.data.mesh[line[1]]
+	self.current_mesh = {}
 end
 
 function IQE:material(line)
 	line = merge_quoted(line)
-	local mesh = self.current_mesh
-	mesh.material = mesh.material or {}
-	mesh.material[line[1]] = mesh.material[line[1]] or {}
-	self.current_material = mesh.material[line[1]]
+
+	self.data.material = self.data.material or {}
+	self.data.material[line[1]] = self.data.material[line[1]] or {}
+	table.insert(self.data.material[line[1]], self.current_mesh)
+	self.current_material = self.data.material[line[1]]
 end
 
 --[[ Vertex Attributes ]]--
 
 function IQE:vp(line)
-	local material = self.current_material
-	material.vp = material.vp or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.vp = mesh.vp or {}
 	local vp = {}
 	for _, v in ipairs(line) do
 		table.insert(vp, tonumber(v))
@@ -122,52 +134,52 @@ function IQE:vp(line)
 	if #vp == 3 then
 		table.insert(vp, 1)
 	end
-	table.insert(material.vp, vp)
+	table.insert(mesh.vp, vp)
 end
 
 function IQE:vt(line)
-	local material = self.current_material
-	material.vt = material.vt or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.vt = mesh.vt or {}
 	local vt = {}
 	for _, v in ipairs(line) do
 		table.insert(vt, tonumber(v))
 	end
-	table.insert(material.vt, vt)
+	table.insert(mesh.vt, vt)
 end
 
 function IQE:vn(line)
-	local material = self.current_material
-	material.vn = material.vn or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.vn = mesh.vn or {}
 	local vn = {}
 	for _, v in ipairs(line) do
 		table.insert(vn, tonumber(v))
 	end
-	table.insert(material.vn, vn)
+	table.insert(mesh.vn, vn)
 end
 
 function IQE:vx(line)
-	local material = self.current_material
-	material.vx = material.vx or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.vx = mesh.vx or {}
 	local vx = {}
 	for _, v in ipairs(line) do
 		table.insert(vx, tonumber(v))
 	end
-	table.insert(material.vx, vx)
+	table.insert(mesh.vx, vx)
 end
 
 function IQE:vb(line)
-	local material = self.current_material
-	material.vb = material.vb or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.vb = mesh.vb or {}
 	local vb = {}
 	for _, v in ipairs(line) do
 		table.insert(vb, tonumber(v))
 	end
-	table.insert(material.vb, vb)
+	table.insert(mesh.vb, vb)
 end
 
 function IQE:vc(line)
-	local material = self.current_material
-	material.vc = material.vc or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.vc = mesh.vc or {}
 	local vc = {}
 	for _, v in ipairs(line) do
 		table.insert(vc, tonumber(v))
@@ -175,18 +187,18 @@ function IQE:vc(line)
 	if #vc == 3 then
 		table.insert(vc, 1)
 	end
-	table.insert(material.vc, vc)
+	table.insert(mesh.vc, vc)
 end
 
 function IQE:v0(line, cmd)
 	cmd = cmd or "v0"
-	local material = self.current_material
-	material[cmd] = material[cmd] or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh[cmd] = mesh[cmd] or {}
 	local v0 = {}
 	for _, v in ipairs(line) do
 		table.insert(v0, tonumber(v))
 	end
-	table.insert(material[cmd], v0)
+	table.insert(mesh[cmd], v0)
 end
 
 function IQE:v1(line)
@@ -242,72 +254,72 @@ end
 --[[ Triangle ]]--
 
 function IQE:fa(line)
-	local material = self.current_material
-	material.fa = material.fa or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.fa = mesh.fa or {}
 	local fa = {}
 	for k, v in ipairs(line) do
 		table.insert(fa, tonumber(v))
 	end
-	table.insert(material.fa, fa)
+	table.insert(mesh.fa, fa)
 end
 
 function IQE:fm(line)
-	local material = self.current_material
-	material.fm = material.fm or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.fm = mesh.fm or {}
 	local fm = {}
 	for k, v in ipairs(line) do
 		table.insert(fm, tonumber(v))
 	end
-	table.insert(material.fm, fm)
+	table.insert(mesh.fm, fm)
 end
 
 --[[ Smoothing ]]--
 
 function IQE:smoothuv(line)
-	local material = self.current_material
+	local mesh = self.current_material[#self.current_material]
 	local n = tonumber(line[1])
-	material.smoothuv = false
+	mesh.smoothuv = false
 
 	if n > 0 then
-		material.smoothuv = true
+		mesh.smoothuv = true
 	end
 end
 
 function IQE:smoothgroup(line)
-	local material = self.current_material
+	local mesh = self.current_material[#self.current_material]
 	local n = tonumber(line[1])
-	material.smoothgroup = -1
+	mesh.smoothgroup = -1
 
 	if n then
-		material.smoothgroup = n
+		mesh.smoothgroup = n
 	end
 end
 
 function IQE:smoothangle(line)
-	local material = self.current_material
+	local mesh = self.current_material[#self.current_material]
 	local angle = tonumber(line[1])
-	material.smoothangle = 180
+	mesh.smoothangle = 180
 
 	if angle then
-		material.smoothangle = angle
+		mesh.smoothangle = angle
 	end
 end
 
 function IQE:fs(line)
-	local material = self.current_material
-	material.fs = material.fs or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.fs = mesh.fs or {}
 	local fs = {}
 	for k, v in ipairs(line) do
 		table.insert(fs, tonumber(v))
 	end
-	table.insert(material.fs, fs)
+	table.insert(mesh.fs, fs)
 end
 
 function IQE:vs(line)
-	local material = self.current_material
-	material.vs = material.vs or {}
+	local mesh = self.current_material[#self.current_material]
+	mesh.vs = mesh.vs or {}
 	local vs = tonumber(line[1])
-	table.insert(material.vs, vs)
+	table.insert(mesh.vs, vs)
 end
 
 --[[ Poses ]]--
@@ -395,7 +407,7 @@ end
 function IQE:animation(line)
 	line = merge_quoted(line)
 	self.data.animation = self.data.animation or {}
-	local name = line[1] or tostring(love.math.random(0, 99999))
+	local name = line[1] or tostring(math.random(0, 99999))
 	self.data.animation[name] = {}
 	self.current_animation = self.data.animation[name]
 	self.current_frame = false
@@ -416,6 +428,98 @@ function IQE:frame(line)
 	animation.frame = animation.frame or {}
 	table.insert(animation.frame, {})
 	self.current_frame = animation.frame[#animation.frame]
+end
+
+--[[ Render ]]--
+
+function IQE:buffer()
+	self.buffer = {}
+	self.buffer.mesh = {}
+
+	for k, material in pairs(self.data.material) do
+		for _, mesh in ipairs(material) do
+			local layout = {
+				"float", 3,
+				"float", 3,
+				"float", 2,
+				"byte", 4, -- bone indices
+				"byte", 4 -- bone weight
+			}
+
+			local data = {}
+			for i = 1,#mesh.vp do
+				local vp = mesh.vp[i]
+				local vn = mesh.vn[i]
+				local vt = mesh.vt[i]
+				local vb = mesh.vb[i]
+
+				local current = {}
+				table.insert(current, vp[1])
+				table.insert(current, vp[2])
+				table.insert(current, vp[3])
+
+				table.insert(current, vn[1] or 0)
+				table.insert(current, vn[2] or 0)
+				table.insert(current, vn[3] or 0)
+
+				table.insert(current, vt[1] or 0)
+				table.insert(current, vt[2] or 0)
+
+				table.insert(current, vb[1] or 0)
+				table.insert(current, vb[3] or 0)
+				table.insert(current, vb[5] or 0)
+				table.insert(current, vb[7] or 0)
+
+				table.insert(current, vb[2] or 0)
+				table.insert(current, vb[4] or 0)
+				table.insert(current, vb[6] or 0)
+				table.insert(current, vb[8] or 0)
+
+				table.insert(data, current)
+			end
+
+			local tris = {}
+			for _, v in ipairs(mesh.fm) do
+				table.insert(tris, v[1] + 1)
+				table.insert(tris, v[2] + 1)
+				table.insert(tris, v[3] + 1)
+			end
+
+			-- HACK: Use the built in vertex positions for UV coords.
+			local m = love.graphics.newMesh(mesh.vt, nil, "triangles")
+
+			if m then
+				table.insert(self.buffer.mesh, { mesh=k, mesh=m })
+			else
+				error("Something went terribly wrong creating the mesh.")
+				break
+			end
+
+			local buffer = love.graphics.newVertexBuffer(layout, data, "static")
+
+			if not buffer then
+				error("Something went terribly wrong creating the vertex buffer.")
+			end
+
+			m:setVertexAttribute("v_position", buffer, 1)
+			m:setVertexAttribute("v_normal", buffer, 2)
+			m:setVertexMap(tris)
+		end
+	end
+end
+
+function IQE:update(dt)
+
+end
+
+function IQE:draw()
+	if self.shader then
+		for _, mesh in ipairs(self.buffer.mesh) do
+			love.graphics.setShader(self.shader)
+			love.graphics.draw(mesh.mesh)
+		end
+		love.graphics.setShader()
+	end
 end
 
 return IQE
