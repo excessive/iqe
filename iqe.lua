@@ -1,3 +1,36 @@
+--[[
+------------------------------------------------------------------------------
+Inter-Quake Export Loader is licensed under the MIT Open Source License.
+(http://www.opensource.org/licenses/mit-license.html)
+------------------------------------------------------------------------------
+
+Copyright (c) 2014 Landon Manning - LManning17@gmail.com - LandonManning.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+]]--
+
+local path = ... .. "."
+local loader = {}
+local IQE = {}
+
+loader.version = "0.1.1"
+
 --[[ Helper Functions ]]--
 
 -- http://wiki.interfaceware.com/534.html
@@ -59,10 +92,52 @@ local function toboolean(v)
 			(type(v) == "boolean" and v)
 end
 
-local IQE = {}
+
+local function file_exists(file)
+	if love then return love.filesystem.exists(file) end
+
+	local f = io.open(file, "r")
+	if f then f:close() end
+	return f ~= nil
+end
+
+--[[ Load File ]]--
+
+function loader.load(file, iqe)
+	assert(file_exists(file), "File not found: " .. file)
+
+	local get_lines
+
+	if love then
+		get_lines = love.filesystem.lines
+	else
+		get_lines = io.lines
+	end
+
+	local lines = {}
+
+	for line in get_lines(file) do
+		if line == "# Inter-Quake Export" or line[1] ~= "#" then
+			line = string.gsub(line, "\t", "")
+			table.insert(lines, line)
+		end
+	end
+
+	if lines[1] == "# Inter-Quake Export" then
+		local model = {}
+		model = setmetatable(model, {__index = IQE})
+		model:init(lines)
+		
+		return model
+	else
+		iqe:parse(lines)
+	end
+end
+
+--[[ Inter-Quake Export ]]--
 
 function IQE:init(lines)
-	self.iqe = lines
+	self.lines = lines
 	self.current_mesh = false
 	self.current_material = false
 	self.current_joint = false
@@ -70,6 +145,7 @@ function IQE:init(lines)
 	self.current_frame = false
 	self.current_vertexarray = false
 	self.data = {}
+	self.materials = {}
 	self:parse()
 
 	if love then
@@ -81,13 +157,9 @@ function IQE:init(lines)
 	end
 end
 
-function IQE:load_shader()
-	local glsl = love.filesystem.read("assets/shader.glsl")
-	self.shader = love.graphics.newShader(glsl, glsl)
-end
-
-function IQE:parse()
-	for _, line in ipairs(self.iqe) do
+function IQE:parse(lines)
+	self.lines = self.lines or lines
+	for _, line in ipairs(self.lines) do
 		local l = string_split(line, " ")
 		local cmd = l[1]
 		table.remove(l, 1)
@@ -97,13 +169,19 @@ function IQE:parse()
 		end
 	end
 
-	self.iqe = nil
+	self.lines = nil
 	self.current_mesh = nil
 	self.current_material = nil
 	self.current_joint = nil
 	self.current_animation = nil
 	self.current_frame = nil
 	self.current_vertexarray = nil
+	self.current_mtl = nil
+end
+
+function IQE:load_shader()
+	local glsl = love.filesystem.read("assets/shader.glsl")
+	self.shader = love.graphics.newShader(glsl, glsl)
 end
 
 --[[ Meshes ]]--
@@ -430,6 +508,47 @@ function IQE:frame(line)
 	self.current_frame = animation.frame[#animation.frame]
 end
 
+--[[ Wavefront Material File ]]--
+
+function IQE:newmtl(line)
+	line = merge_quoted(line)
+	self.materials[line[1]] = self.materials[line[1]] or {}
+	self.current_mtl = self.materials[line[1]]
+end
+
+function IQE:Ns(line)
+	self.current_mtl.ns = tonumber(line[1])
+end
+
+function IQE:Ka(line)
+	self.current_mtl.ka = { tonumber(line[1]), tonumber(line[2]), tonumber(line[3]) }
+end
+
+function IQE:Kd(line)
+	self.current_mtl.kd = { tonumber(line[1]), tonumber(line[2]), tonumber(line[3]) }
+end
+
+function IQE:Ks(line)
+	self.current_mtl.ks = { tonumber(line[1]), tonumber(line[2]), tonumber(line[3]) }
+end
+
+function IQE:Ni(line)
+	self.current_mtl.ni = tonumber(line[1])
+end
+
+function IQE:d(line)
+	self.current_mtl.d = tonumber(line[1])
+end
+
+function IQE:illum(line)
+	self.current_mtl.illum = tonumber(line[1])
+end
+
+function IQE:map_Kd(line)
+	line = merge_quoted(line)
+	self.current_mtl.map_kd = line[1]
+end
+
 --[[ Render ]]--
 
 function IQE:buffer()
@@ -489,7 +608,7 @@ function IQE:buffer()
 			local m = love.graphics.newMesh(mesh.vt, nil, "triangles")
 
 			if m then
-				table.insert(self.buffer.mesh, { mesh=k, mesh=m })
+				table.insert(self.buffer.mesh, { material=k, mesh=m })
 			else
 				error("Something went terribly wrong creating the mesh.")
 				break
@@ -514,12 +633,19 @@ end
 
 function IQE:draw()
 	if self.shader then
+		love.graphics.setShader(self.shader)
 		for _, mesh in ipairs(self.buffer.mesh) do
-			love.graphics.setShader(self.shader)
+			local mtl = self.materials[mesh.material]
+			if mtl then
+				self.shader:send("u_Ka", mtl.ka)
+				self.shader:send("u_Kd", mtl.kd)
+				self.shader:send("u_Ks", mtl.ks)
+				self.shader:send("u_Ns", mtl.ns)
+			end
 			love.graphics.draw(mesh.mesh)
 		end
 		love.graphics.setShader()
 	end
 end
 
-return IQE
+return loader
