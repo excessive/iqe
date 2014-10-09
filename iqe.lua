@@ -5,6 +5,7 @@ Inter-Quake Export Loader is licensed under the MIT Open Source License.
 ------------------------------------------------------------------------------
 
 Copyright (c) 2014 Landon Manning - LManning17@gmail.com - LandonManning.com
+Copyright (c) 2014 Colby Klein - shakesoda@gmail.com - excessive.moe
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -29,7 +30,9 @@ local path = ... .. "."
 local loader = {}
 local IQE = {}
 
-loader.version = "0.1.2"
+local matrix = require "libs.matrix"
+
+loader.version = "0.1.3"
 
 --[[ Helper Functions ]]--
 
@@ -131,6 +134,7 @@ function loader.load(file, iqe)
 		return model
 	else
 		iqe:parse(lines)
+		iqe:load_mtl_textures()
 	end
 end
 
@@ -144,8 +148,10 @@ function IQE:init(lines)
 	self.current_animation = false
 	self.current_frame = false
 	self.current_vertexarray = false
+	self.paused = false
 	self.data = {}
 	self.materials = {}
+	self.textures = {}
 	self:parse()
 
 	if love then
@@ -409,6 +415,9 @@ function IQE:pq(line)
 	end
 	if #pq == 6 then
 		table.insert(pq, -1)
+	end
+
+	if #pq == 7 then
 		table.insert(pq, 1)
 		table.insert(pq, 1)
 		table.insert(pq, 1)
@@ -439,11 +448,11 @@ function IQE:pm(line)
 	local joint
 	if not self.current_animation then
 		joint = self.current_joint
-		joint.pq = pq
+		joint.pm = pm
 	else
 		joint = self.current_frame
-		joint.pq = joint.pq or {}
-		table.insert(joint.pq, pq)
+		joint.pm = joint.pm or {}
+		table.insert(joint.pm, pm)
 	end
 end
 
@@ -452,7 +461,7 @@ function IQE:pa(line)
 	for _, v in ipairs(line) do
 		table.insert(pa, tonumber(v))
 	end
-	if #pm == 6 then
+	if #pa == 6 then
 		table.insert(pa, 1)
 		table.insert(pa, 1)
 		table.insert(pa, 1)
@@ -461,11 +470,11 @@ function IQE:pa(line)
 	local joint
 	if not self.current_animation then
 		joint = self.current_joint
-		joint.pq = pq
+		joint.pa = pa
 	else
 		joint = self.current_frame
-		joint.pq = joint.pq or {}
-		table.insert(joint.pq, pq)
+		joint.pa = joint.pa or {}
+		table.insert(joint.pa, pa)
 	end
 end
 
@@ -474,10 +483,12 @@ end
 function IQE:joint(line)
 	line = merge_quoted(line)
 	self.data.joint = self.data.joint or {}
-	self.data.joint[line[1]] = {}
+	local joint = {}
+	joint.name = line[1]
+	joint.parent = tonumber(line[2]) + 1 -- fix offset
+	table.insert(self.data.joint, joint)
 
-	self.current_joint = self.data.joint[line[1]]
-	self.current_joint.parent = tonumber(line[2])
+	self.current_joint = joint
 end
 
 --[[ Animations ]]--
@@ -549,6 +560,25 @@ function IQE:map_Kd(line)
 	self.current_mtl.map_kd = line[1]
 end
 
+function IQE:load_mtl_textures()
+	if love.filesystem.isFile("assets/blank.png") then
+		self.textures.blank = love.graphics.newImage("assets/blank.png")
+	end
+	for _, mesh in ipairs(self.buffer.mesh) do
+		local mtl = self.materials[mesh.material]
+		if mtl and mtl.map_kd and not self.textures[mtl.map_kd] then
+			local file = mtl.map_kd
+			if love.filesystem.isFile(file) then
+				self.textures[file] = love.graphics.newImage(file)
+				self.textures[file]:setFilter("linear", "linear", 16)
+				if console then
+					console.i(string.format("Loaded texture %s", file))
+				end
+			end
+		end
+	end
+end
+
 --[[ Render ]]--
 
 function IQE:buffer()
@@ -560,8 +590,7 @@ function IQE:buffer()
 			local layout = {
 				"float", 3,
 				"float", 3,
-				"float", 2,
-				"byte", 4, -- bone indices
+				"float", 4, -- bone indices
 				"float", 4 -- bone weight
 			}
 
@@ -580,9 +609,6 @@ function IQE:buffer()
 				table.insert(current, vn[1] or 0)
 				table.insert(current, vn[2] or 0)
 				table.insert(current, vn[3] or 0)
-
-				table.insert(current, vt[1] or 0)
-				table.insert(current, vt[2] or 0)
 
 				table.insert(current, vb[1] or 0)
 				table.insert(current, vb[3] or 0)
@@ -627,13 +653,36 @@ function IQE:buffer()
 			m:setVertexMap(tris)
 		end
 	end
+
+	self.active_animation = {}
+	self.active_animation.base = {}
+	self.active_animation.inverse_base = {}
+
+	local base = self.active_animation.base
+	local inverse_base = self.active_animation.inverse_base
+
+	for i, joint in ipairs(self.data.joint) do
+		local pose = joint.pq
+
+		local quat = matrix.quaternion(pose[4], pose[5], pose[6], pose[7])
+		local scale = { pose[8], pose[9], pose[10] }
+		local pos = { pose[1], pose[2], pose[3] }
+
+		base[i] = matrix.matrix4x4().fromQuat(quat:normalize(), scale):translate(pos)
+		inverse_base[i] = base[i]:clone():invert()
+
+		if joint.parent >= 1 then
+			base[i] = base[joint.parent] * base[i]
+			inverse_base[i] = inverse_base[i] * inverse_base[joint.parent]
+		end
+	end
 end
 
 function IQE:update(dt)
-	self.timer:update(dt)
+	--self.timer:update(dt)
 
-	if self.animation then
-
+	if self.active_animation.name then
+		self:next_frame()
 	end
 end
 
@@ -647,7 +696,18 @@ function IQE:draw()
 				self.shader:send("u_Kd", mtl.kd)
 				self.shader:send("u_Ks", mtl.ks)
 				self.shader:send("u_Ns", mtl.ns)
+				self.shader:sendInt("u_shading", mtl.illum)
+				if mtl.map_kd then
+					self.shader:send("u_map_Kd", self.textures[mtl.map_kd])
+				else
+					self.shader:send("u_map_Kd", self.textures.blank)
+				end
 			end
+
+			if self.active_animation.current_frame then
+				self:send_frame()
+			end
+
 			love.graphics.draw(mesh.mesh)
 		end
 		love.graphics.setShader()
@@ -655,19 +715,79 @@ function IQE:draw()
 end
 
 function IQE:animate(animation, Timer)
-	self.timer = self.timer or assert(Timer.new(), "No timer loaded. vrld's HUMP.Timer recommended.")
+	--self.timer = self.timer or assert(Timer.new(), "No timer loaded. vrld's HUMP.Timer recommended.")
+	if not animation then
+		self.active_animation.name = nil
+		self.active_animation.current_frame = false
+		self.shader:sendInt("u_skinning", 0)
+		return
+	end
 	local ani = assert(self.data.animation[animation], string.format("No such animation: %s", animation))
 
-	self.animation = {}
-	self.animation.name = animation
-	self.animation.frame = ani.frame
-	self.animation.framerate = ani.framerate
-	self.animation.loop = ani.loop
-	self.animation.current_frame = 1
+	self.active_animation = {
+		base = self.active_animation.base,
+		inverse_base = self.active_animation.inverse_base
+	}
+	self.active_animation.name = animation
+	self.active_animation.frame = ani.frame
+	self.active_animation.framerate = ani.framerate
+	self.active_animation.loop = ani.loop
+	self.active_animation.current_frame = 0
+
+	self:next_frame()
 end
 
 function IQE:next_frame()
-	self.timer:tween() -- recursive
+	if self.paused then return end
+	if self.active_animation.current_frame < #self.active_animation.frame then
+		self.active_animation.current_frame = self.active_animation.current_frame + 1
+		return
+	elseif self.active_animation.current_frame == #self.active_animation.frame and self.active_animation.loop then
+		self.active_animation.current_frame = 1
+		return
+	end
+
+	self.active_animation.current_frame = false
+end
+
+function IQE:send_frame()
+	local function print_r(t, level)
+		level = level or 0
+		for k,v in pairs(t) do
+			local str = string.format("%s: %s", (" "):rep(level) .. k, v)
+			console.i(str)
+			print(str)
+			if type(v) == "table" then
+				print_r(v, level + 1)
+			end
+		end
+	end
+
+	local buffer = {}
+	local base = self.active_animation.base
+	local inverse_base = self.active_animation.inverse_base
+	for k, pq in ipairs(self.active_animation.frame[self.active_animation.current_frame].pq) do
+		local joint = self.data.joint[k]
+		local pose = pq
+
+		local quat = matrix.quaternion(pose[4], pose[5], pose[6], pose[7])
+		local scale = { pose[8], pose[9], pose[10] }
+		local pos = { pose[1], pose[2], pose[3] }
+
+		local m = matrix.matrix4x4.fromQuat(quat:normalize(), scale):translate(pos)
+		local f = matrix.matrix4x4()
+
+		if joint.parent >= 1 then
+			f = base[joint.parent] * m * inverse_base[k]
+		else
+			f = m * inverse_base[k]
+		end
+
+		table.insert(buffer, f:toVec4s())
+	end
+
+	self.shader:send("u_bone_matrices", unpack(buffer))
+	self.shader:sendInt("u_skinning", 1)
 end
 
 return loader
