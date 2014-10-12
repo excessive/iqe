@@ -595,7 +595,7 @@ function IQE:buffer()
 			}
 
 			local data = {}
-			for i = 1,#mesh.vp do
+			for i=1, #mesh.vp do
 				local vp = mesh.vp[i]
 				local vn = mesh.vn[i]
 				local vt = mesh.vt[i]
@@ -654,26 +654,66 @@ function IQE:buffer()
 		end
 	end
 
-	self.active_animation = {}
-	self.active_animation.base = {}
-	self.active_animation.inverse_base = {}
+	local function calc_bone_matrix(pos, rot, scale)
+		local out = matrix.matrix4x4()
+		out = out:translate(pos)
+		out = out:rotate(rot)
+		out = out:scale(scale)
+		return out
+	end
 
-	local base = self.active_animation.base
-	local inverse_base = self.active_animation.inverse_base
+	local base = {}
+	local inverse_base = {}
 
 	for i, joint in ipairs(self.data.joint) do
 		local pose = joint.pq
 
-		local quat = matrix.quaternion(pose[4], pose[5], pose[6], pose[7])
-		local scale = { pose[8], pose[9], pose[10] }
-		local pos = { pose[1], pose[2], pose[3] }
+		local m = calc_bone_matrix(
+			{ pose[1], pose[2], pose[3] },
+			matrix.quaternion(pose[4], pose[5], pose[6], pose[7]),
+			{ pose[8], pose[9], pose[10] }
+		)
+		local inv = m:invert()
 
-		base[i] = matrix.matrix4x4().fromQuat(quat:normalize(), scale):translate(pos)
-		inverse_base[i] = base[i]:clone():invert()
+		if joint.parent > 0 then
+			assert(joint.parent < i)
+			base[i] = base[joint.parent] * m
+			inverse_base[i] = inv * inverse_base[joint.parent]
+		else
+			base[i] = m
+			inverse_base[i] = inv
+		end
+	end
 
-		if joint.parent >= 1 then
-			base[i] = base[joint.parent] * base[i]
-			inverse_base[i] = inverse_base[i] * inverse_base[joint.parent]
+	self.animation_buffer = {}
+	for a, animation in pairs(self.data.animation) do
+		self.animation_buffer[a] = {}
+
+		for f, frame in ipairs(animation.frame) do
+			self.animation_buffer[a][f] = {}
+			local transform = {}
+
+			for p, pq in ipairs(frame.pq) do
+				local joint = self.data.joint[p]
+
+				local m = calc_bone_matrix(
+					{ pq[1], pq[2], pq[3] },
+					matrix.quaternion(pq[4], pq[5], pq[6], pq[7]),
+					{ pq[8], pq[9], pq[10] }
+				)
+				local render = matrix.matrix4x4()
+
+				if joint.parent > 0 then
+					assert(joint.parent < p)
+					transform[p] = transform[joint.parent] * m
+					render = transform[p] * inverse_base[p]
+				else
+					transform[p] = m
+					render = m * inverse_base[p]
+				end
+
+				table.insert(self.animation_buffer[a][f], render:to_vec4s())
+			end
 		end
 	end
 end
@@ -697,7 +737,7 @@ function IQE:draw()
 				self.shader:send("u_Ks", mtl.ks)
 				self.shader:send("u_Ns", mtl.ns)
 				self.shader:sendInt("u_shading", mtl.illum)
-				if mtl.map_kd then
+				if self.textures[mtl.map_kd] then
 					self.shader:send("u_map_Kd", self.textures[mtl.map_kd])
 				else
 					self.shader:send("u_map_Kd", self.textures.blank)
@@ -722,14 +762,13 @@ function IQE:animate(animation, Timer)
 		self.shader:sendInt("u_skinning", 0)
 		return
 	end
-	local ani = assert(self.data.animation[animation], string.format("No such animation: %s", animation))
 
-	self.active_animation = {
-		base = self.active_animation.base,
-		inverse_base = self.active_animation.inverse_base
-	}
+	local ani = assert(self.data.animation[animation], string.format("No such animation: %s", animation))
+	local buffer = self.animation_buffer[animation]
+
+	self.active_animation = {}
 	self.active_animation.name = animation
-	self.active_animation.frame = ani.frame
+	self.active_animation.frame = buffer
 	self.active_animation.framerate = ani.framerate
 	self.active_animation.loop = ani.loop
 	self.active_animation.current_frame = 0
@@ -739,54 +778,23 @@ end
 
 function IQE:next_frame()
 	if self.paused then return end
-	if self.active_animation.current_frame < #self.active_animation.frame then
-		self.active_animation.current_frame = self.active_animation.current_frame + 1
-		return
-	elseif self.active_animation.current_frame == #self.active_animation.frame and self.active_animation.loop then
-		self.active_animation.current_frame = 1
-		return
+	if self.active_animation.current_frame then
+		if self.active_animation.current_frame < #self.active_animation.frame then
+			self.active_animation.current_frame = self.active_animation.current_frame + 1
+			return
+		elseif self.active_animation.current_frame == #self.active_animation.frame and self.active_animation.loop then
+			self.active_animation.current_frame = 1
+			return
+		end
 	end
 
 	self.active_animation.current_frame = false
 end
 
 function IQE:send_frame()
-	local function print_r(t, level)
-		level = level or 0
-		for k,v in pairs(t) do
-			local str = string.format("%s: %s", (" "):rep(level) .. k, v)
-			console.i(str)
-			print(str)
-			if type(v) == "table" then
-				print_r(v, level + 1)
-			end
-		end
-	end
-
-	local buffer = {}
-	local base = self.active_animation.base
-	local inverse_base = self.active_animation.inverse_base
-	for k, pq in ipairs(self.active_animation.frame[self.active_animation.current_frame].pq) do
-		local joint = self.data.joint[k]
-		local pose = pq
-
-		local quat = matrix.quaternion(pose[4], pose[5], pose[6], pose[7])
-		local scale = { pose[8], pose[9], pose[10] }
-		local pos = { pose[1], pose[2], pose[3] }
-
-		local m = matrix.matrix4x4.fromQuat(quat:normalize(), scale):translate(pos)
-		local f = matrix.matrix4x4()
-
-		if joint.parent >= 1 then
-			f = base[joint.parent] * m * inverse_base[k]
-		else
-			f = m * inverse_base[k]
-		end
-
-		table.insert(buffer, f:toVec4s())
-	end
-
-	self.shader:send("u_bone_matrices", unpack(buffer))
+	local f = self.active_animation.frame
+	local cf = self.active_animation.current_frame
+	self.shader:send("u_bone_matrices", unpack(f[cf]))
 	self.shader:sendInt("u_skinning", 1)
 end
 
