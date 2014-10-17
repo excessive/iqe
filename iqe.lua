@@ -32,7 +32,10 @@ local IQE = {}
 
 local matrix = require "libs.matrix"
 
-loader.version = "0.1.3"
+-- global texture registry
+local textures
+
+loader.version = "0.1.4"
 
 --[[ Helper Functions ]]--
 
@@ -151,8 +154,10 @@ function IQE:init(lines)
 	self.paused = false
 	self.data = {}
 	self.materials = {}
-	self.textures = {}
+	textures = textures or {}
+	self.stats = {}
 	self:parse()
+	self.active_animation = {}
 
 	if love then
 		math.random = love.math.random
@@ -253,6 +258,7 @@ end
 
 function IQE:vb(line)
 	local mesh = self.current_material[#self.current_material]
+	self.rigged = true
 	mesh.vb = mesh.vb or {}
 	local vb = {}
 	for _, v in ipairs(line) do
@@ -561,19 +567,22 @@ function IQE:map_Kd(line)
 end
 
 function IQE:load_mtl_textures()
-	if love.filesystem.isFile("assets/blank.png") then
-		self.textures.blank = love.graphics.newImage("assets/blank.png")
+	if not textures.blank and love.filesystem.isFile("assets/blank.png") then
+		textures.blank = love.graphics.newImage("assets/blank.png")
 	end
 	for _, mesh in ipairs(self.buffer.mesh) do
 		local mtl = self.materials[mesh.material]
-		if mtl and mtl.map_kd and not self.textures[mtl.map_kd] then
+		if mtl and mtl.map_kd and not textures[mtl.map_kd] then
 			local file = mtl.map_kd
 			if love.filesystem.isFile(file) then
-				self.textures[file] = love.graphics.newImage(file)
-				self.textures[file]:setFilter("linear", "linear", 16)
-				if console then
-					console.i(string.format("Loaded texture %s", file))
+				textures[file] = love.graphics.newImage(file)
+				self.stats.textures = (self.stats.textures or 0) + 1
+				textures[file]:setFilter("linear", "linear", 16)
+				if not console then
+					local console = {}
+					console.i = print
 				end
+				console.i(string.format("Loaded texture %s", file))
 			end
 		end
 	end
@@ -585,21 +594,28 @@ function IQE:buffer()
 	self.buffer = {}
 	self.buffer.mesh = {}
 
+	local stats = self.stats
+
 	for k, material in pairs(self.data.material) do
 		for _, mesh in ipairs(material) do
 			local layout = {
 				"float", 3,
-				"float", 3,
-				"float", 4, -- bone indices
-				"float", 4 -- bone weight
+				"float", 3
 			}
+
+			if self.rigged then
+				table.insert(layout, "float")
+				table.insert(layout, 4)
+				table.insert(layout, "float")
+				table.insert(layout, 4)
+			end
 
 			local data = {}
 			for i=1, #mesh.vp do
+				-- all meshes should have these things...
 				local vp = mesh.vp[i]
 				local vn = mesh.vn[i]
 				local vt = mesh.vt[i]
-				local vb = mesh.vb[i]
 
 				local current = {}
 				table.insert(current, vp[1])
@@ -610,15 +626,19 @@ function IQE:buffer()
 				table.insert(current, vn[2] or 0)
 				table.insert(current, vn[3] or 0)
 
-				table.insert(current, vb[1] or 0)
-				table.insert(current, vb[3] or 0)
-				table.insert(current, vb[5] or 0)
-				table.insert(current, vb[7] or 0)
+				-- ...but only rigged ones will have these.
+				if self.rigged then
+					local vb = mesh.vb[i]
+					table.insert(current, vb[1] or 0)
+					table.insert(current, vb[3] or 0)
+					table.insert(current, vb[5] or 0)
+					table.insert(current, vb[7] or 0)
 
-				table.insert(current, vb[2] or 0)
-				table.insert(current, vb[4] or 0)
-				table.insert(current, vb[6] or 0)
-				table.insert(current, vb[8] or 0)
+					table.insert(current, vb[2] or 0)
+					table.insert(current, vb[4] or 0)
+					table.insert(current, vb[6] or 0)
+					table.insert(current, vb[8] or 0)
+				end
 
 				table.insert(data, current)
 			end
@@ -629,6 +649,9 @@ function IQE:buffer()
 				table.insert(tris, v[2] + 1)
 				table.insert(tris, v[3] + 1)
 			end
+
+			stats.vertices = (stats.vertices or 0) + #mesh.vt
+			stats.triangles = (stats.triangles or 0) + #mesh.fm
 
 			-- HACK: Use the built in vertex positions for UV coords.
 			local m = love.graphics.newMesh(mesh.vt, nil, "triangles")
@@ -648,17 +671,24 @@ function IQE:buffer()
 
 			m:setVertexAttribute("v_position", buffer, 1)
 			m:setVertexAttribute("v_normal", buffer, 2)
-			m:setVertexAttribute("v_bone", buffer, 3)
-			m:setVertexAttribute("v_weight", buffer, 4)
+			if self.rigged then
+				m:setVertexAttribute("v_bone", buffer, 3)
+				m:setVertexAttribute("v_weight", buffer, 4)
+			end
 			m:setVertexMap(tris)
 		end
 	end
 
+	-- everything after here only applies to models with skeletons.
+	if not self.rigged then
+		return
+	end
+
 	local function calc_bone_matrix(pos, rot, scale)
 		local out = matrix.matrix4x4()
-		out = out:translate(pos)
-		out = out:rotate(rot)
-		out = out:scale(scale)
+			:translate(pos)
+			:rotate(rot)
+			:scale(scale)
 		return out
 	end
 
@@ -670,15 +700,15 @@ function IQE:buffer()
 
 		local m = calc_bone_matrix(
 			{ pose[1], pose[2], pose[3] },
-			matrix.quaternion(pose[4], pose[5], pose[6], pose[7]),
+			matrix.quaternion(pose[7], pose[4], pose[5], pose[6]),
 			{ pose[8], pose[9], pose[10] }
 		)
 		local inv = m:invert()
 
 		if joint.parent > 0 then
 			assert(joint.parent < i)
-			base[i] = base[joint.parent] * m
-			inverse_base[i] = inv * inverse_base[joint.parent]
+			base[i] = m * base[joint.parent]
+			inverse_base[i] = inverse_base[joint.parent] * inv
 		else
 			base[i] = m
 			inverse_base[i] = inv
@@ -686,6 +716,12 @@ function IQE:buffer()
 	end
 
 	self.animation_buffer = {}
+
+	-- it's entirely possible for a model to be rigged but not animated.
+	if not self.data.animation then
+		return
+	end
+
 	for a, animation in pairs(self.data.animation) do
 		self.animation_buffer[a] = {}
 
@@ -698,18 +734,18 @@ function IQE:buffer()
 
 				local m = calc_bone_matrix(
 					{ pq[1], pq[2], pq[3] },
-					matrix.quaternion(pq[4], pq[5], pq[6], pq[7]),
+					matrix.quaternion(pq[7], pq[4], pq[5], pq[6]),
 					{ pq[8], pq[9], pq[10] }
 				)
 				local render = matrix.matrix4x4()
 
 				if joint.parent > 0 then
 					assert(joint.parent < p)
-					transform[p] = transform[joint.parent] * m
-					render = transform[p] * inverse_base[p]
+					transform[p] = m * transform[joint.parent]
+					render = inverse_base[p] * transform[p]
 				else
 					transform[p] = m
-					render = m * inverse_base[p]
+					render = inverse_base[p] * m
 				end
 
 				table.insert(self.animation_buffer[a][f], render:to_vec4s())
@@ -737,10 +773,10 @@ function IQE:draw()
 				self.shader:send("u_Ks", mtl.ks)
 				self.shader:send("u_Ns", mtl.ns)
 				self.shader:sendInt("u_shading", mtl.illum)
-				if self.textures[mtl.map_kd] then
-					self.shader:send("u_map_Kd", self.textures[mtl.map_kd])
+				if textures[mtl.map_kd] then
+					self.shader:send("u_map_Kd", textures[mtl.map_kd])
 				else
-					self.shader:send("u_map_Kd", self.textures.blank)
+					self.shader:send("u_map_Kd", textures.blank)
 				end
 			end
 
@@ -756,7 +792,7 @@ end
 
 function IQE:animate(animation, Timer)
 	--self.timer = self.timer or assert(Timer.new(), "No timer loaded. vrld's HUMP.Timer recommended.")
-	if not animation then
+	if not animation or not self.rigged then
 		self.active_animation.name = nil
 		self.active_animation.current_frame = false
 		self.shader:sendInt("u_skinning", 0)
@@ -772,23 +808,31 @@ function IQE:animate(animation, Timer)
 	self.active_animation.framerate = ani.framerate
 	self.active_animation.loop = ani.loop
 	self.active_animation.current_frame = 0
+	self.active_animation.last_frame_time = 0
 
 	self:next_frame()
 end
 
 function IQE:next_frame()
 	if self.paused then return end
-	if self.active_animation.current_frame then
-		if self.active_animation.current_frame < #self.active_animation.frame then
-			self.active_animation.current_frame = self.active_animation.current_frame + 1
+	local anim = self.active_animation
+	if anim.current_frame then
+		if love.timer.getTime() - anim.last_frame_time < 1 / anim.framerate then
 			return
-		elseif self.active_animation.current_frame == #self.active_animation.frame and self.active_animation.loop then
-			self.active_animation.current_frame = 1
+		end
+
+		if anim.current_frame < #anim.frame then
+			anim.current_frame = anim.current_frame + 1
+			anim.last_frame_time = love.timer.getTime()
+			return
+		elseif anim.current_frame == #anim.frame and anim.loop then
+			anim.current_frame = 1
+			anim.last_frame_time = love.timer.getTime()
 			return
 		end
 	end
 
-	self.active_animation.current_frame = false
+	anim.current_frame = false
 end
 
 function IQE:send_frame()
@@ -796,6 +840,40 @@ function IQE:send_frame()
 	local cf = self.active_animation.current_frame
 	self.shader:send("u_bone_matrices", unpack(f[cf]))
 	self.shader:sendInt("u_skinning", 1)
+end
+
+function IQE:dump()
+	local function create_dump(file, t)
+		local buffer = ""
+		local lines = 0
+		local function dump_r(t, level)
+			level = level or 1
+			for k,v in pairs(t) do
+				buffer = buffer .. rpad(" ", 12 * level) .. rpad(tostring(k), 3)  .. " " .. tostring(v) .. "\n"
+				lines = lines + 1
+				if lines >= 2048 then
+					love.filesystem.append(file, buffer)
+					lines = 0
+					buffer = ""
+				end
+				if type(v) == "table" then
+					dump_r(v, level + 1)
+				end
+			end
+		end
+		dump_r(t)
+		love.filesystem.append(file, buffer)
+	end
+	local t = love.timer.getTime()
+	local file = "dump.txt"
+	love.filesystem.write(file, "")
+	create_dump(file, self.model.data)
+	t = love.timer.getTime() - t
+	if not console then
+		local console = {}
+		console.i = print
+	end
+	console.i(string.format("Successfully wrote model dump to \"%s\" in %fs.", love.filesystem.getSaveDirectory() .. "/" .. file, t))
 end
 
 return loader
