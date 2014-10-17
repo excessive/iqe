@@ -32,10 +32,11 @@ local IQE = {}
 
 local matrix = require "libs.matrix"
 
--- global texture registry
+-- global resource registries
+local models
 local textures
 
-loader.version = "0.1.4"
+loader.version = "0.2.0"
 
 --[[ Helper Functions ]]--
 
@@ -98,7 +99,6 @@ local function toboolean(v)
 			(type(v) == "boolean" and v)
 end
 
-
 local function file_exists(file)
 	if love then return love.filesystem.exists(file) end
 
@@ -111,6 +111,13 @@ end
 
 function loader.load(file, iqe)
 	assert(file_exists(file), "File not found: " .. file)
+
+	models = models or {}
+	textures = textures or {}
+
+	if models[file] then
+		return models[file]
+	end
 
 	local get_lines
 
@@ -132,7 +139,7 @@ function loader.load(file, iqe)
 	if lines[1] == "# Inter-Quake Export" then
 		local model = {}
 		model = setmetatable(model, {__index = IQE})
-		model:init(lines)
+		model:init(lines, file)
 		
 		return model
 	else
@@ -143,7 +150,7 @@ end
 
 --[[ Inter-Quake Export ]]--
 
-function IQE:init(lines)
+function IQE:init(lines, file)
 	self.lines = lines
 	self.current_mesh = false
 	self.current_material = false
@@ -154,10 +161,9 @@ function IQE:init(lines)
 	self.paused = false
 	self.data = {}
 	self.materials = {}
-	textures = textures or {}
 	self.stats = {}
+
 	self:parse()
-	self.active_animation = {}
 
 	if love then
 		math.random = love.math.random
@@ -166,6 +172,8 @@ function IQE:init(lines)
 			self:buffer()
 		end
 	end
+
+	models[file] = self
 end
 
 function IQE:parse(lines)
@@ -570,7 +578,7 @@ function IQE:load_mtl_textures()
 	if not textures.blank and love.filesystem.isFile("assets/blank.png") then
 		textures.blank = love.graphics.newImage("assets/blank.png")
 	end
-	for _, mesh in ipairs(self.buffer.mesh) do
+	for _, mesh in ipairs(self.vertex_buffer.mesh) do
 		local mtl = self.materials[mesh.material]
 		if mtl and mtl.map_kd and not textures[mtl.map_kd] then
 			local file = mtl.map_kd
@@ -591,8 +599,8 @@ end
 --[[ Render ]]--
 
 function IQE:buffer()
-	self.buffer = {}
-	self.buffer.mesh = {}
+	self.vertex_buffer = {}
+	self.vertex_buffer.mesh = {}
 
 	local stats = self.stats
 
@@ -657,7 +665,7 @@ function IQE:buffer()
 			local m = love.graphics.newMesh(mesh.vt, nil, "triangles")
 
 			if m then
-				table.insert(self.buffer.mesh, { material=k, mesh=m })
+				table.insert(self.vertex_buffer.mesh, { material=k, mesh=m })
 			else
 				error("Something went terribly wrong creating the mesh.")
 				break
@@ -680,9 +688,7 @@ function IQE:buffer()
 	end
 
 	-- everything after here only applies to models with skeletons.
-	if not self.rigged then
-		return
-	end
+	if not self.rigged then return end
 
 	local function calc_bone_matrix(pos, rot, scale)
 		local out = matrix.matrix4x4()
@@ -715,12 +721,10 @@ function IQE:buffer()
 		end
 	end
 
-	self.animation_buffer = {}
-
 	-- it's entirely possible for a model to be rigged but not animated.
-	if not self.data.animation then
-		return
-	end
+	if not self.data.animation then return end
+
+	self.animation_buffer = {}
 
 	for a, animation in pairs(self.data.animation) do
 		self.animation_buffer[a] = {}
@@ -752,94 +756,6 @@ function IQE:buffer()
 			end
 		end
 	end
-end
-
-function IQE:update(dt)
-	--self.timer:update(dt)
-
-	if self.active_animation.name then
-		self:next_frame()
-	end
-end
-
-function IQE:draw()
-	if self.shader then
-		love.graphics.setShader(self.shader)
-		for _, mesh in ipairs(self.buffer.mesh) do
-			local mtl = self.materials[mesh.material]
-			if mtl then
-				self.shader:send("u_Ka", mtl.ka)
-				self.shader:send("u_Kd", mtl.kd)
-				self.shader:send("u_Ks", mtl.ks)
-				self.shader:send("u_Ns", mtl.ns)
-				self.shader:sendInt("u_shading", mtl.illum)
-				if textures[mtl.map_kd] then
-					self.shader:send("u_map_Kd", textures[mtl.map_kd])
-				else
-					self.shader:send("u_map_Kd", textures.blank)
-				end
-			end
-
-			if self.active_animation.current_frame then
-				self:send_frame()
-			end
-
-			love.graphics.draw(mesh.mesh)
-		end
-		love.graphics.setShader()
-	end
-end
-
-function IQE:animate(animation, Timer)
-	--self.timer = self.timer or assert(Timer.new(), "No timer loaded. vrld's HUMP.Timer recommended.")
-	if not animation or not self.rigged then
-		self.active_animation.name = nil
-		self.active_animation.current_frame = false
-		self.shader:sendInt("u_skinning", 0)
-		return
-	end
-
-	local ani = assert(self.data.animation[animation], string.format("No such animation: %s", animation))
-	local buffer = self.animation_buffer[animation]
-
-	self.active_animation = {}
-	self.active_animation.name = animation
-	self.active_animation.frame = buffer
-	self.active_animation.framerate = ani.framerate
-	self.active_animation.loop = ani.loop
-	self.active_animation.current_frame = 0
-	self.active_animation.last_frame_time = 0
-
-	self:next_frame()
-end
-
-function IQE:next_frame()
-	if self.paused then return end
-	local anim = self.active_animation
-	if anim.current_frame then
-		if love.timer.getTime() - anim.last_frame_time < 1 / anim.framerate then
-			return
-		end
-
-		if anim.current_frame < #anim.frame then
-			anim.current_frame = anim.current_frame + 1
-			anim.last_frame_time = love.timer.getTime()
-			return
-		elseif anim.current_frame == #anim.frame and anim.loop then
-			anim.current_frame = 1
-			anim.last_frame_time = love.timer.getTime()
-			return
-		end
-	end
-
-	anim.current_frame = false
-end
-
-function IQE:send_frame()
-	local f = self.active_animation.frame
-	local cf = self.active_animation.current_frame
-	self.shader:send("u_bone_matrices", unpack(f[cf]))
-	self.shader:sendInt("u_skinning", 1)
 end
 
 function IQE:dump()
@@ -874,6 +790,10 @@ function IQE:dump()
 		console.i = print
 	end
 	console.i(string.format("Successfully wrote model dump to \"%s\" in %fs.", love.filesystem.getSaveDirectory() .. "/" .. file, t))
+end
+
+function IQE:getTexture(name)
+	return textures[name]
 end
 
 return loader

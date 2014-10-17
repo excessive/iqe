@@ -2,7 +2,7 @@
 
 Inter-Quake Export Loader is a library for parsing Inter-Quake Export files into Lua data structures. IQE Loader can also load Wavefront Material files.
 
-Rendering models is supported using the [**LÖVE**][LOVE] game framework.
+Buffering models is supported using the [**LÖVE**][LOVE] game framework.
 
 
 ## Quick Example
