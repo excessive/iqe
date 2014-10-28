@@ -27,16 +27,20 @@ THE SOFTWARE.
 ]]--
 
 local path = ... .. "."
-local loader = {}
+local loader = {
+	_LICENSE = "Lua IQE Loader is distributed under the terms of the MIT license. See LICENSE.md.",
+	_URL = "https://github.com/karai17/Lua-IQE-Loader",
+	_VERSION = "0.2.1",
+	_DESCRIPTION = "Load an IQE 3D model (and optional MTL material) into Lua.",
+}
 local IQE = {}
 
-local matrix = require "libs.matrix"
+local cpml = require "libs.cpml"
 
 -- global resource registries
 local models
 local textures
 
-loader.version = "0.2.0"
 
 --[[ Helper Functions ]]--
 
@@ -140,7 +144,15 @@ function loader.load(file, iqe)
 		local model = {}
 		model = setmetatable(model, {__index = IQE})
 		model:init(lines, file)
-		
+		-- make sure we always have the blank texture, if nothing else.
+		if not textures.blank and love.filesystem.isFile("assets/textures/blank.png") then
+			textures.blank = love.graphics.newImage("assets/textures/blank.png")
+			assert(textures.blank)
+		end
+		if not textures.reflection and love.filesystem.isFile("assets/textures/rough-aluminum.jpg") then
+			textures.reflection = love.graphics.newImage("assets/textures/rough-aluminum.jpg")
+			assert(textures.reflection)
+		end
 		return model
 	else
 		iqe:parse(lines)
@@ -198,8 +210,8 @@ function IQE:parse(lines)
 	self.current_mtl = nil
 end
 
-function IQE:load_shader()
-	local glsl = love.filesystem.read("assets/shader.glsl")
+function IQE:load_shader(shader)
+	local glsl = love.filesystem.read(shader)
 	self.shader = love.graphics.newShader(glsl, glsl)
 end
 
@@ -574,24 +586,28 @@ function IQE:map_Kd(line)
 	self.current_mtl.map_kd = line[1]
 end
 
-function IQE:load_mtl_textures()
-	if not textures.blank and love.filesystem.isFile("assets/blank.png") then
-		textures.blank = love.graphics.newImage("assets/blank.png")
+function IQE:load_texture(file, filter)
+	if file and not textures[file] then
+		if love.filesystem.isFile(file) then
+			textures[file] = love.graphics.newImage(file)
+			self.stats.textures = (self.stats.textures or 0) + 1
+			textures[file]:setFilter("linear", "linear", filter or 16)
+			textures[file]:setWrap("repeat", "repeat")
+
+			if not console then
+				local console = {}
+				console.i = print
+			end
+			console.i(string.format("Loaded texture %s", file))
+		end
 	end
+end
+
+function IQE:load_mtl_textures()
 	for _, mesh in ipairs(self.vertex_buffer.mesh) do
 		local mtl = self.materials[mesh.material]
-		if mtl and mtl.map_kd and not textures[mtl.map_kd] then
-			local file = mtl.map_kd
-			if love.filesystem.isFile(file) then
-				textures[file] = love.graphics.newImage(file)
-				self.stats.textures = (self.stats.textures or 0) + 1
-				textures[file]:setFilter("linear", "linear", 16)
-				if not console then
-					local console = {}
-					console.i = print
-				end
-				console.i(string.format("Loaded texture %s", file))
-			end
+		if mtl and mtl.map_kd then
+			self:load_texture(mtl.map_kd, 16)
 		end
 	end
 end
@@ -691,7 +707,7 @@ function IQE:buffer()
 	if not self.rigged then return end
 
 	local function calc_bone_matrix(pos, rot, scale)
-		local out = matrix.matrix4x4()
+		local out = cpml.mat4()
 			:translate(pos)
 			:rotate(rot)
 			:scale(scale)
@@ -705,9 +721,9 @@ function IQE:buffer()
 		local pose = joint.pq
 
 		local m = calc_bone_matrix(
-			{ pose[1], pose[2], pose[3] },
-			matrix.quaternion(pose[7], pose[4], pose[5], pose[6]),
-			{ pose[8], pose[9], pose[10] }
+			cpml.vec3(pose[1], pose[2], pose[3]),
+			cpml.quat(pose[7], pose[4], pose[5], pose[6]),
+			cpml.vec3(pose[8], pose[9], pose[10])
 		)
 		local inv = m:invert()
 
@@ -737,11 +753,11 @@ function IQE:buffer()
 				local joint = self.data.joint[p]
 
 				local m = calc_bone_matrix(
-					{ pq[1], pq[2], pq[3] },
-					matrix.quaternion(pq[7], pq[4], pq[5], pq[6]),
-					{ pq[8], pq[9], pq[10] }
+					cpml.vec3(pq[1], pq[2], pq[3]),
+					cpml.quat(pq[7], pq[4], pq[5], pq[6]),
+					cpml.vec3(pq[8], pq[9], pq[10])
 				)
-				local render = matrix.matrix4x4()
+				local render = cpml.mat4()
 
 				if joint.parent > 0 then
 					assert(joint.parent < p)
@@ -785,15 +801,14 @@ function IQE:dump()
 	love.filesystem.write(file, "")
 	create_dump(file, self.model.data)
 	t = love.timer.getTime() - t
-	if not console then
-		local console = {}
-		console.i = print
-	end
 	console.i(string.format("Successfully wrote model dump to \"%s\" in %fs.", love.filesystem.getSaveDirectory() .. "/" .. file, t))
 end
 
-function IQE:getTexture(name)
-	return textures[name]
+function IQE:get_texture(name)
+	if name and not textures[name] then
+		console.i("Texture " .. tostring(name) .. " not found.")
+	end
+	return textures[name] or textures.blank
 end
 
 return loader
