@@ -117,7 +117,6 @@ function loader.load(file, iqe)
 	assert(file_exists(file), "File not found: " .. file)
 
 	models = models or {}
-	textures = textures or {}
 
 	if models[file] then
 		return models[file]
@@ -144,19 +143,20 @@ function loader.load(file, iqe)
 		local model = {}
 		model = setmetatable(model, {__index = IQE})
 		model:init(lines, file)
-		-- make sure we always have the blank texture, if nothing else.
-		if not textures.blank and love.filesystem.isFile("assets/textures/blank.png") then
-			textures.blank = love.graphics.newImage("assets/textures/blank.png")
-			assert(textures.blank)
-		end
-		if not textures.reflection and love.filesystem.isFile("assets/textures/rough-aluminum.jpg") then
-			textures.reflection = love.graphics.newImage("assets/textures/rough-aluminum.jpg")
-			assert(textures.reflection)
-		end
+
 		return model
 	else
 		iqe:parse(lines)
 		iqe:load_mtl_textures()
+	end
+end
+
+function loader.load_texture(name, texture)
+	textures = textures or {}
+
+	if not textures[name] and love.filesystem.isFile(texture) then
+		textures[name] = love.graphics.newImage(texture)
+		assert(textures.blank)
 	end
 end
 
@@ -179,7 +179,6 @@ function IQE:init(lines, file)
 
 	if love then
 		math.random = love.math.random
-		self:load_shader()
 		if love.graphics.newVertexBuffer then
 			self:buffer()
 		end
