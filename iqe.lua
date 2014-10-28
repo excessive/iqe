@@ -38,8 +38,8 @@ local IQE = {}
 local cpml = require "libs.cpml"
 
 -- global resource registries
-local models
-local textures
+local models = {}
+local textures = {}
 
 
 --[[ Helper Functions ]]--
@@ -116,8 +116,6 @@ end
 function loader.load(file, iqe)
 	assert(file_exists(file), "File not found: " .. file)
 
-	models = models or {}
-
 	if models[file] then
 		return models[file]
 	end
@@ -149,14 +147,10 @@ function loader.load(file, iqe)
 		iqe:parse(lines)
 		iqe:load_mtl_textures()
 	end
-end
 
-function loader.load_texture(name, texture)
-	textures = textures or {}
-
-	if not textures[name] and love.filesystem.isFile(texture) then
-		textures[name] = love.graphics.newImage(texture)
-		assert(textures.blank)
+	if love then
+		local id = love.image.newImageData(1, 1)
+		textures.blank = love.graphics.newImage(id)
 	end
 end
 
@@ -207,6 +201,27 @@ function IQE:parse(lines)
 	self.current_frame = nil
 	self.current_vertexarray = nil
 	self.current_mtl = nil
+end
+
+function IQE:load_texture(file, filter)
+	if not textures[file] and love.filesystem.isFile(file) then
+		textures[file] = love.graphics.newImage(file)
+		textures[file]:setFilter("linear", "linear", filter or 16)
+		textures[file]:setWrap("repeat", "repeat")
+	end
+end
+
+function IQE:get_texture(name)
+	return textures[name] or textures.blank
+end
+
+function IQE:load_mtl_textures()
+	for _, mesh in ipairs(self.vertex_buffer.mesh) do
+		local mtl = self.materials[mesh.material]
+		if mtl and mtl.map_kd then
+			self:load_texture(mtl.map_kd, 16)
+		end
+	end
 end
 
 function IQE:load_shader(shader)
@@ -585,32 +600,6 @@ function IQE:map_Kd(line)
 	self.current_mtl.map_kd = line[1]
 end
 
-function IQE:load_texture(file, filter)
-	if file and not textures[file] then
-		if love.filesystem.isFile(file) then
-			textures[file] = love.graphics.newImage(file)
-			self.stats.textures = (self.stats.textures or 0) + 1
-			textures[file]:setFilter("linear", "linear", filter or 16)
-			textures[file]:setWrap("repeat", "repeat")
-
-			if not console then
-				local console = {}
-				console.i = print
-			end
-			console.i(string.format("Loaded texture %s", file))
-		end
-	end
-end
-
-function IQE:load_mtl_textures()
-	for _, mesh in ipairs(self.vertex_buffer.mesh) do
-		local mtl = self.materials[mesh.material]
-		if mtl and mtl.map_kd then
-			self:load_texture(mtl.map_kd, 16)
-		end
-	end
-end
-
 --[[ Render ]]--
 
 function IQE:buffer()
@@ -795,19 +784,9 @@ function IQE:dump()
 		dump_r(t)
 		love.filesystem.append(file, buffer)
 	end
-	local t = love.timer.getTime()
 	local file = "dump.txt"
 	love.filesystem.write(file, "")
 	create_dump(file, self.model.data)
-	t = love.timer.getTime() - t
-	console.i(string.format("Successfully wrote model dump to \"%s\" in %fs.", love.filesystem.getSaveDirectory() .. "/" .. file, t))
-end
-
-function IQE:get_texture(name)
-	if name and not textures[name] then
-		console.i("Texture " .. tostring(name) .. " not found.")
-	end
-	return textures[name] or textures.blank
 end
 
 return loader
