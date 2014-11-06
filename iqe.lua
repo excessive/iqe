@@ -30,7 +30,7 @@ local path = ... .. "."
 local loader = {
 	_LICENSE = "Lua IQE Loader is distributed under the terms of the MIT license. See LICENSE.md.",
 	_URL = "https://github.com/karai17/Lua-IQE-Loader",
-	_VERSION = "0.2.1",
+	_VERSION = "0.2.2",
 	_DESCRIPTION = "Load an IQE 3D model (and optional MTL material) into Lua.",
 }
 local IQE = {}
@@ -123,7 +123,8 @@ function loader.load(file, iqe)
 	local get_lines
 
 	if love then
-		get_lines = love.filesystem.lines
+		local filetext = love.filesystem.read(file)
+		get_lines = function(file) return filetext:gmatch("[^\r\n]+") end
 	else
 		get_lines = io.lines
 	end
@@ -167,6 +168,7 @@ function IQE:init(lines, file)
 	self.paused = false
 	self.data = {}
 	self.materials = {}
+	self.vertex_buffer = {}
 	self.stats = {}
 
 	self:parse()
@@ -216,7 +218,7 @@ function IQE:get_texture(name)
 end
 
 function IQE:load_mtl_textures()
-	for _, mesh in ipairs(self.vertex_buffer.mesh) do
+	for _, mesh in pairs(self.vertex_buffer) do
 		local mtl = self.materials[mesh.material]
 		if mtl and mtl.map_kd then
 			self:load_texture(mtl.map_kd, 16)
@@ -225,8 +227,7 @@ function IQE:load_mtl_textures()
 end
 
 function IQE:load_shader(shader)
-	local glsl = love.filesystem.read(shader)
-	self.shader = love.graphics.newShader(glsl, glsl)
+	self.shader = love.graphics.newShader(shader, shader)
 end
 
 --[[ Meshes ]]--
@@ -234,6 +235,7 @@ end
 function IQE:mesh(line)
 	line = merge_quoted(line)
 	self.current_mesh = {}
+	self.current_mesh.name = line[1]
 end
 
 function IQE:material(line)
@@ -603,9 +605,6 @@ end
 --[[ Render ]]--
 
 function IQE:buffer()
-	self.vertex_buffer = {}
-	self.vertex_buffer.mesh = {}
-
 	local stats = self.stats
 
 	for k, material in pairs(self.data.material) do
@@ -669,7 +668,7 @@ function IQE:buffer()
 			local m = love.graphics.newMesh(mesh.vt, nil, "triangles")
 
 			if m then
-				table.insert(self.vertex_buffer.mesh, { material=k, mesh=m })
+				table.insert(self.vertex_buffer, { material=k, mesh=m, name=mesh.name })
 			else
 				error("Something went terribly wrong creating the mesh.")
 				break
@@ -786,7 +785,7 @@ function IQE:dump()
 	end
 	local file = "dump.txt"
 	love.filesystem.write(file, "")
-	create_dump(file, self.model.data)
+	create_dump(file, self.data)
 end
 
 return loader
