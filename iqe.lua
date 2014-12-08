@@ -30,7 +30,7 @@ local path = ... .. "."
 local loader = {
 	_LICENSE = "Lua IQE Loader is distributed under the terms of the MIT license. See LICENSE.md.",
 	_URL = "https://github.com/karai17/Lua-IQE-Loader",
-	_VERSION = "0.2.2",
+	_VERSION = "0.2.3",
 	_DESCRIPTION = "Load an IQE 3D model (and optional MTL material) into Lua.",
 }
 local IQE = {}
@@ -113,7 +113,7 @@ end
 
 --[[ Load File ]]--
 
-function loader.load(file, iqe)
+function loader.load(file)
 	assert(file_exists(file), "File not found: " .. file)
 
 	if models[file] then
@@ -144,9 +144,6 @@ function loader.load(file, iqe)
 		model:init(lines, file)
 
 		return model
-	else
-		iqe:parse(lines)
-		iqe:load_mtl_textures()
 	end
 
 	if love then
@@ -215,6 +212,29 @@ end
 
 function IQE:get_texture(name)
 	return textures[name] or textures.blank
+end
+
+function IQE:load_material(file)
+	local get_lines
+
+	if love then
+		local filetext = love.filesystem.read(file)
+		get_lines = function(file) return filetext:gmatch("[^\r\n]+") end
+	else
+		get_lines = io.lines
+	end
+
+	local lines = {}
+
+	for line in get_lines(file) do
+		if line[1] ~= "#" then
+			line = string.gsub(line, "\t", "")
+			table.insert(lines, line)
+		end
+	end
+
+	self:parse(lines)
+	self:load_mtl_textures()
 end
 
 function IQE:load_mtl_textures()
@@ -611,7 +631,8 @@ function IQE:buffer()
 		for _, mesh in ipairs(material) do
 			local layout = {
 				"float", 3,
-				"float", 3
+				"float", 3,
+				"float", 2
 			}
 
 			if self.rigged then
@@ -622,6 +643,7 @@ function IQE:buffer()
 			end
 
 			local data = {}
+			local bounds = { min = {}, max = {} }
 			for i=1, #mesh.vp do
 				-- all meshes should have these things...
 				local vp = mesh.vp[i]
@@ -636,6 +658,16 @@ function IQE:buffer()
 				table.insert(current, vn[1] or 0)
 				table.insert(current, vn[2] or 0)
 				table.insert(current, vn[3] or 0)
+
+				table.insert(current, vt[1] or 0)
+				table.insert(current, vt[2] or 0)
+
+				bounds.min.x = bounds.min.x and math.min(bounds.min.x, vp[1]) or vp[1]
+				bounds.max.x = bounds.max.x and math.max(bounds.max.x, vp[1]) or vp[1]
+				bounds.min.y = bounds.min.y and math.min(bounds.min.y, vp[2]) or vp[2]
+				bounds.max.y = bounds.max.y and math.max(bounds.max.y, vp[2]) or vp[2]
+				bounds.min.z = bounds.min.z and math.min(bounds.min.z, vp[3]) or vp[3]
+				bounds.max.z = bounds.max.z and math.max(bounds.max.z, vp[3]) or vp[3]
 
 				-- ...but only rigged ones will have these.
 				if self.rigged then
@@ -654,6 +686,9 @@ function IQE:buffer()
 				table.insert(data, current)
 			end
 
+			bounds.min = cpml.vec3(bounds.min)
+			bounds.max = cpml.vec3(bounds.max)
+
 			local tris = {}
 			for _, v in ipairs(mesh.fm) do
 				table.insert(tris, v[1] + 1)
@@ -664,11 +699,10 @@ function IQE:buffer()
 			stats.vertices = (stats.vertices or 0) + #mesh.vt
 			stats.triangles = (stats.triangles or 0) + #mesh.fm
 
-			-- HACK: Use the built in vertex positions for UV coords.
-			local m = love.graphics.newMesh(mesh.vt, nil, "triangles")
+			local m = love.graphics.newMesh(0, nil, "triangles")
 
 			if m then
-				table.insert(self.vertex_buffer, { material=k, mesh=m, name=mesh.name })
+				table.insert(self.vertex_buffer, { material=k, mesh=m, name=mesh.name, bounds=bounds })
 			else
 				error("Something went terribly wrong creating the mesh.")
 				break
@@ -680,15 +714,19 @@ function IQE:buffer()
 				error("Something went terribly wrong creating the vertex buffer.")
 			end
 
-			m:setVertexAttribute("v_position", buffer, 1)
+			-- NOTE: We *HAVE* to use VertexPosition for LOVE to play ball here. Annoying.
+			m:setVertexAttribute("VertexPosition", buffer, 1)
 			m:setVertexAttribute("v_normal", buffer, 2)
+			m:setVertexAttribute("v_coord", buffer, 3)
 			if self.rigged then
-				m:setVertexAttribute("v_bone", buffer, 3)
-				m:setVertexAttribute("v_weight", buffer, 4)
+				m:setVertexAttribute("v_bone", buffer, 4)
+				m:setVertexAttribute("v_weight", buffer, 5)
 			end
 			m:setVertexMap(tris)
 		end
 	end
+
+	self:calc_bounds()
 
 	-- everything after here only applies to models with skeletons.
 	if not self.rigged then return end
@@ -701,8 +739,8 @@ function IQE:buffer()
 		return out
 	end
 
-	local base = {}
-	local inverse_base = {}
+	--self.base = {}
+	self.inverse_base = {}
 
 	for i, joint in ipairs(self.data.joint) do
 		local pose = joint.pq
@@ -716,11 +754,11 @@ function IQE:buffer()
 
 		if joint.parent > 0 then
 			assert(joint.parent < i)
-			base[i] = m * base[joint.parent]
-			inverse_base[i] = inverse_base[joint.parent] * inv
+			--self.base[i] = m * self.base[joint.parent]
+			self.inverse_base[i] = self.inverse_base[joint.parent] * inv
 		else
-			base[i] = m
-			inverse_base[i] = inv
+			--self.base[i] = m
+			self.inverse_base[i] = inv
 		end
 	end
 
@@ -749,10 +787,10 @@ function IQE:buffer()
 				if joint.parent > 0 then
 					assert(joint.parent < p)
 					transform[p] = m * transform[joint.parent]
-					render = inverse_base[p] * transform[p]
+					render = self.inverse_base[p] * transform[p]
 				else
 					transform[p] = m
-					render = inverse_base[p] * m
+					render = self.inverse_base[p] * m
 				end
 
 				table.insert(self.animation_buffer[a][f], render:to_vec4s())
@@ -786,6 +824,22 @@ function IQE:dump()
 	local file = "dump.txt"
 	love.filesystem.write(file, "")
 	create_dump(file, self.data)
+end
+
+function IQE:calc_bounds()
+	self.bounds = { min = {}, max = {} }
+	for _, buffer in ipairs(self.vertex_buffer) do
+		local b = buffer.bounds
+		self.bounds.min.x = self.bounds.min.x and math.min(self.bounds.min.x, b.min.x) or b.min.x
+		self.bounds.max.x = self.bounds.max.x and math.max(self.bounds.max.x, b.max.x) or b.max.x
+		self.bounds.min.y = self.bounds.min.y and math.min(self.bounds.min.y, b.min.y) or b.min.y
+		self.bounds.max.y = self.bounds.max.y and math.max(self.bounds.max.y, b.max.y) or b.max.y
+		self.bounds.min.z = self.bounds.min.z and math.min(self.bounds.min.z, b.min.z) or b.min.z
+		self.bounds.max.z = self.bounds.max.z and math.max(self.bounds.max.z, b.max.z) or b.max.z
+	end
+
+	self.bounds.min = cpml.vec3(self.bounds.min)
+	self.bounds.max = cpml.vec3(self.bounds.max)
 end
 
 return loader
