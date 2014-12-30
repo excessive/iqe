@@ -30,7 +30,7 @@ local path = ... .. "."
 local loader = {
 	_LICENSE = "Lua IQE Loader is distributed under the terms of the MIT license. See LICENSE.md.",
 	_URL = "https://github.com/karai17/Lua-IQE-Loader",
-	_VERSION = "0.2.3",
+	_VERSION = "0.2.4",
 	_DESCRIPTION = "Load an IQE 3D model (and optional MTL material) into Lua.",
 }
 local IQE = {}
@@ -125,6 +125,8 @@ function loader.load(file)
 	if love then
 		local filetext = love.filesystem.read(file)
 		get_lines = function(file) return filetext:gmatch("[^\r\n]+") end
+
+		textures.blank = love.graphics.newImage(love.image.newImageData(1, 1))
 	else
 		get_lines = io.lines
 	end
@@ -144,11 +146,6 @@ function loader.load(file)
 		model:init(lines, file)
 
 		return model
-	end
-
-	if love then
-		local id = love.image.newImageData(1, 1)
-		textures.blank = love.graphics.newImage(id)
 	end
 end
 
