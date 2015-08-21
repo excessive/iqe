@@ -27,11 +27,11 @@ THE SOFTWARE.
 ]]--
 
 local path     = ... .. "."
-local cpml     = require "libs.cpml"
+local cpml     = require "cpml"
 local loader   = {
 	_LICENSE     = "Lua IQE Loader is distributed under the terms of the MIT license. See LICENSE.md.",
 	_URL         = "https://github.com/karai17/Lua-IQE-Loader",
-	_VERSION     = "0.2.7",
+	_VERSION     = "0.2.8",
 	_DESCRIPTION = "Load an IQE 3D model (and optional MTL material) into Lua.",
 }
 local IQE      = {}
@@ -101,7 +101,7 @@ local function toboolean(v)
 end
 
 local function file_exists(file)
-	if love then return love.filesystem.exists(file) end
+	if love then return love.filesystem.isFile(file) end
 
 	local f = io.open(file, "r")
 	if f then f:close() end
@@ -164,9 +164,7 @@ function IQE:init(lines, file)
 	if love then
 		self.srgb   = select(3, love.window.getMode()).srgb
 		math.random = love.math.random
-		if love.graphics.newVertexBuffer then
-			self:buffer()
-		end
+		self:buffer()
 	end
 
 	models[file] = self
@@ -196,7 +194,7 @@ end
 
 function IQE:load_texture(file, filter)
 	if not textures[file] and love.filesystem.isFile(file) then
-		textures[file] = love.graphics.newImage(file, self.srgb and "srgb" or nil)
+		textures[file] = love.graphics.newImage(file, {srgb=self.srgb})
 		textures[file]:setFilter("linear", "linear", filter or 16)
 		textures[file]:setWrap("repeat", "repeat")
 	end
@@ -648,17 +646,15 @@ function IQE:buffer()
 	for k, material in pairs(self.data.material) do
 		for _, mesh in ipairs(material) do
 			local layout = {
-				"float", 3,
-				"float", 2,
-				"byte", 4,
-				"float", 3,
+				{ "VertexPosition", "float", 3 },
+				{ "VertexTexCoord", "float", 2 },
+				{ "VertexColor", "byte", 4 },
+				{ "VertexNormal", "float", 3 }
 			}
 
 			if self.rigged then
-				table.insert(layout, "float")
-				table.insert(layout, 4)
-				table.insert(layout, "float")
-				table.insert(layout, 4)
+				table.insert(layout, { "VertexBone", "byte", 4 })
+				table.insert(layout, { "VertexWeight", "float", 4 })
 			end
 
 			local data   = {}
@@ -669,27 +665,16 @@ function IQE:buffer()
 				local vn = mesh.vn and mesh.vn[i] or {}
 				local vc = mesh.vc and { mesh.vc[i][1] * 255, mesh.vc[i][2] * 255, mesh.vc[i][3] * 255, mesh.vc[i][4] * 255 } or { 255, 255, 255, 255 }
 				local vt = mesh.vt and mesh.vt[i] or {}
-
-				local current = {}
-				table.insert(current, vp[1])
-				table.insert(current, vp[2])
-				table.insert(current, vp[3])
-
-				table.insert(current, vt[1] or 0)
-				table.insert(current, vt[2] or 0)
-
 				if self.srgb then
 					vc = { love.math.gammaToLinear(vc) }
 				end
 
-				table.insert(current, vc[1] or 255)
-				table.insert(current, vc[2] or 255)
-				table.insert(current, vc[3] or 255)
-				table.insert(current, vc[4] or 255)
-
-				table.insert(current, vn[1] or 0)
-				table.insert(current, vn[2] or 1)
-				table.insert(current, vn[3] or 0)
+				local current = {
+					vp[1], vp[2], vp[3],
+					vt[1] or 0, vt[2] or 0,
+					vc[1] or 255, vc[2] or 255, vc[3] or 255, vc[4] or 255,
+					vn[1] or 0, vn[2] or 1, vn[3] or 0
+				}
 
 				bounds.min.x = bounds.min.x and math.min(bounds.min.x, vp[1]) or vp[1]
 				bounds.max.x = bounds.max.x and math.max(bounds.max.x, vp[1]) or vp[1]
@@ -721,32 +706,10 @@ function IQE:buffer()
 			stats.vertices  = (stats.vertices  or 0) + #mesh.vt
 			stats.triangles = (stats.triangles or 0) + #mesh.fm
 
-			local m = love.graphics.newMesh(0, nil, "triangles")
-
-			if m then
-				table.insert(self.vertex_buffer, { material=k, mesh=m, name=mesh.name, bounds=bounds })
-			else
-				error("Something went terribly wrong creating the mesh.")
-				break
-			end
-
-			local buffer = love.graphics.newVertexBuffer(layout, data, "static")
-
-			if not buffer then
-				error("Something went terribly wrong creating the vertex buffer.")
-			end
-
-			-- NOTE: We *HAVE* to use VertexPosition et al for LOVE to play ball here. Annoying.
-			m:setVertexAttribute("VertexPosition", buffer, 1)
-			m:setVertexAttribute("VertexTexCoord", buffer, 2)
-			m:setVertexAttribute("VertexColor",    buffer, 3)
-			m:setVertexAttribute("v_normal",       buffer, 4)
-			if self.rigged then
-				m:setVertexAttribute("v_bone",     buffer, 5)
-				m:setVertexAttribute("v_weight",   buffer, 6)
-			end
-
+			local m = love.graphics.newMesh(layout, data, "triangles", "static")
 			m:setVertexMap(mesh.indices)
+			assert(m, "D:")
+			table.insert(self.vertex_buffer, { material=k, mesh=m, name=mesh.name, bounds=bounds })
 		end
 	end
 
@@ -755,66 +718,51 @@ function IQE:buffer()
 	-- everything after here only applies to models with skeletons.
 	if not self.rigged then return end
 
-	local function calc_bone_matrix(pos, rot, scale)
-		return cpml.mat4()
-			:translate(pos)
-			:rotate(rot)
-			:scale(scale)
-	end
-
-	self.inverse_base = {}
-
+	local anims = {}
+	local skeleton = {}
 	for i, joint in ipairs(self.data.joint) do
-		local pose = joint.pq
-		local m    = calc_bone_matrix(
-			cpml.vec3(pose[1], pose[2], pose[3]),
-			cpml.quat(pose[4], pose[5], pose[6], pose[7]),
-			cpml.vec3(pose[8], pose[9], pose[10])
-		)
-		local inv  = m:invert()
-
-		if joint.parent > 0 then
-			assert(joint.parent < i)
-			self.inverse_base[i] = self.inverse_base[joint.parent] * inv
-		else
-			self.inverse_base[i] = inv
-		end
+		local v = joint.pq
+		local bone = {
+			parent   = joint.parent,
+			name     = joint.name,
+			position = cpml.vec3(v[1], v[2], v[3]),
+			rotation = cpml.quat(v[4], v[5], v[6], v[7]),
+			scale    = cpml.vec3(v[8], v[9], v[10])
+		}
+		skeleton[i], skeleton[bone.name] = bone, bone
 	end
+	anims.skeleton = skeleton
 
 	-- it's entirely possible for a model to be rigged but not animated.
 	if not self.data.animation then return end
 
-	self.animation_buffer = {}
+	anims.frames = {}
 
-	for a, animation in pairs(self.data.animation) do
-		self.animation_buffer[a] = {}
+	for k, animation in pairs(self.data.animation) do
+		local a = {
+			name      = k,
+			first     = #anims.frames+1,
+			last      = #anims.frames+1+#animation.frame,
+			framerate = animation.framerate,
+			loop      = animation.loop or false
+		}
+		table.insert(anims, a)
+		anims[a.name] = a
 
-		for f, frame in ipairs(animation.frame) do
-			self.animation_buffer[a][f] = {}
-			local transform             = {}
-
-			for p, pq in ipairs(frame.pq) do
-				local joint  = self.data.joint[p]
-				local m      = calc_bone_matrix(
-					cpml.vec3(pq[1], pq[2], pq[3]),
-					cpml.quat(pq[4], pq[5], pq[6], pq[7]),
-					cpml.vec3(pq[8], pq[9], pq[10])
-				)
-				local render = cpml.mat4()
-
-				if joint.parent > 0 then
-					assert(joint.parent < p)
-					transform[p] = m * transform[joint.parent]
-					render       = self.inverse_base[p] * transform[p]
-				else
-					transform[p] = m
-					render       = self.inverse_base[p] * m
-				end
-
-				table.insert(self.animation_buffer[a][f], render:to_vec4s())
+		for _, pose in ipairs(animation.frame) do
+			local frame = {}
+			for i, v in ipairs(pose.pq) do
+				table.insert(frame, {
+					translate = cpml.vec3(v[1], v[2], v[3]),
+					rotate    = cpml.quat(v[4], v[5], v[6], v[7]),
+					scale     = cpml.vec3(v[8], v[9], v[10])
+				})
 			end
+			table.insert(anims.frames, frame)
 		end
 	end
+
+	self.anims = anims
 end
 
 function IQE:dump()

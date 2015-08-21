@@ -1,4 +1,4 @@
-# Inter-Quake Export Loader
+# Lua IQE
 
 This code is licensed under the [**MIT Open Source License**][MIT].
 
