@@ -1,42 +1,10 @@
---[[
-------------------------------------------------------------------------------
-Inter-Quake Export Loader is licensed under the MIT Open Source License.
-(http://www.opensource.org/licenses/mit-license.html)
-------------------------------------------------------------------------------
-
-Copyright (c) 2014 Landon Manning - LManning17@gmail.com - LandonManning.com
-Copyright (c) 2014 Colby Klein - shakesoda@gmail.com - excessive.moe
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-]]--
-
-local path     = ... .. "."
-local cpml     = require "cpml"
 local loader   = {
-	_LICENSE     = "Lua IQE Loader is distributed under the terms of the MIT license. See LICENSE.md.",
-	_URL         = "https://github.com/karai17/Lua-IQE-Loader",
-	_VERSION     = "0.2.8",
-	_DESCRIPTION = "Load an IQE 3D model (and optional MTL material) into Lua.",
+	_LICENSE     = "Inter-Quake Export Loader is distributed under the terms of the MIT license. See LICENSE.md.",
+	_URL         = "https://github.com/excessive/iqe",
+	_VERSION     = "1.0.0",
+	_DESCRIPTION = "Load an IQE 3D model into Lua.",
 }
 local IQE      = {}
-local models   = {} -- global cache
-local textures = {} -- global cache
 
 
 --[[ Helper Functions ]]--
@@ -93,13 +61,6 @@ local function merge_quoted(t)
 	return ret
 end
 
-local function toboolean(v)
-	return	(type(v) == "string" and v == "true") or
-			(type(v) == "string" and v == "1") or
-			(type(v) == "number" and v ~= 0) or
-			(type(v) == "boolean" and v)
-end
-
 local function file_exists(file)
 	if love then return love.filesystem.isFile(file) end
 
@@ -113,14 +74,9 @@ end
 function loader.load(file)
 	assert(file_exists(file), "File not found: " .. file)
 
-	if models[file] then
-		return models[file]
-	end
-
 	local get_lines
 
 	if love then
-		textures.blank = love.graphics.newImage(love.image.newImageData(1, 1))
 		local filetext = love.filesystem.read(file)
 		get_lines      = function(file) return filetext:gmatch("[^\r\n]+") end
 	else
@@ -154,7 +110,6 @@ function IQE:init(lines, file)
 	self.current_frame       = false
 	self.current_vertexarray = false
 	self.paused              = false
-	self.srgb                = false
 	self.data                = {}
 	self.materials           = {}
 	self.vertex_buffer       = {}
@@ -162,12 +117,9 @@ function IQE:init(lines, file)
 	self:parse()
 
 	if love then
-		self.srgb   = select(3, love.window.getMode()).srgb
 		math.random = love.math.random
 		self:buffer()
 	end
-
-	models[file] = self
 end
 
 function IQE:parse(lines)
@@ -190,53 +142,6 @@ function IQE:parse(lines)
 	self.current_frame       = nil
 	self.current_vertexarray = nil
 	self.current_mtl         = nil
-end
-
-function IQE:load_texture(file, filter)
-	if not textures[file] and love.filesystem.isFile(file) then
-		textures[file] = love.graphics.newImage(file, {srgb=self.srgb})
-		textures[file]:setFilter("linear", "linear", filter or 16)
-		textures[file]:setWrap("repeat", "repeat")
-	end
-end
-
-function IQE:get_texture(name)
-	return textures[name] or textures.blank
-end
-
-function IQE:load_material(file)
-	local get_lines
-
-	if love then
-		local filetext = love.filesystem.read(file)
-		get_lines      = function(file) return filetext:gmatch("[^\r\n]+") end
-	else
-		get_lines      = io.lines
-	end
-
-	local lines = {}
-	for line in get_lines(file) do
-		if line[1] ~= "#" then
-			line = string.gsub(line, "\t", "")
-			table.insert(lines, line)
-		end
-	end
-
-	self:parse(lines)
-	self:load_mtl_textures()
-end
-
-function IQE:load_mtl_textures()
-	for _, mesh in pairs(self.vertex_buffer) do
-		local mtl = self.materials[mesh.material]
-		if mtl and mtl.map_kd then
-			self:load_texture(mtl.map_kd, 16)
-		end
-	end
-end
-
-function IQE:load_shader(shader)
-	self.shader = love.graphics.newShader(shader, shader)
 end
 
 --[[ Meshes ]]--
@@ -422,10 +327,14 @@ function IQE:fm(line)
 	mesh.indices = mesh.indices or {}
 
 	local fm = {}
-	for k, v in ipairs(line) do
-		table.insert(fm, tonumber(v) + 1)
-		table.insert(mesh.indices, tonumber(v) + 1)
-	end
+
+	-- CCW Winding
+	table.insert(fm, tonumber(line[1]+1))
+	table.insert(fm, tonumber(line[3]+1))
+	table.insert(fm, tonumber(line[2]+1))
+	table.insert(mesh.indices, tonumber(line[1]+1))
+	table.insert(mesh.indices, tonumber(line[3]+1))
+	table.insert(mesh.indices, tonumber(line[2]+1))
 
 	table.insert(mesh.fm, fm)
 end
@@ -596,51 +505,10 @@ function IQE:frame(line)
 	self.current_frame = animation.frame[#animation.frame]
 end
 
---[[ Wavefront Material File ]]--
-
-function IQE:newmtl(line)
-	line                    = merge_quoted(line)
-	self.materials[line[1]] = self.materials[line[1]] or {}
-
-	self.current_mtl = self.materials[line[1]]
-end
-
-function IQE:Ns(line)
-	self.current_mtl.ns    = tonumber(line[1])
-end
-
-function IQE:Ka(line)
-	self.current_mtl.ka    = { tonumber(line[1]), tonumber(line[2]), tonumber(line[3]) }
-end
-
-function IQE:Kd(line)
-	self.current_mtl.kd    = { tonumber(line[1]), tonumber(line[2]), tonumber(line[3]) }
-end
-
-function IQE:Ks(line)
-	self.current_mtl.ks    = { tonumber(line[1]), tonumber(line[2]), tonumber(line[3]) }
-end
-
-function IQE:Ni(line)
-	self.current_mtl.ni    = tonumber(line[1])
-end
-
-function IQE:d(line)
-	self.current_mtl.d     = tonumber(line[1])
-end
-
-function IQE:illum(line)
-	self.current_mtl.illum = tonumber(line[1])
-end
-
-function IQE:map_Kd(line)
-	line = merge_quoted(line)
-	self.current_mtl.map_kd = line[1]
-end
-
 --[[ Render ]]--
 
 function IQE:buffer()
+	local cpml  = require "cpml"
 	local stats = self.stats
 
 	for k, material in pairs(self.data.material) do
@@ -665,9 +533,6 @@ function IQE:buffer()
 				local vn = mesh.vn and mesh.vn[i] or {}
 				local vc = mesh.vc and { mesh.vc[i][1] * 255, mesh.vc[i][2] * 255, mesh.vc[i][3] * 255, mesh.vc[i][4] * 255 } or { 255, 255, 255, 255 }
 				local vt = mesh.vt and mesh.vt[i] or {}
-				if self.srgb then
-					vc = { love.math.gammaToLinear(vc) }
-				end
 
 				local current = {
 					vp[1], vp[2], vp[3],
@@ -742,7 +607,7 @@ function IQE:buffer()
 		local a = {
 			name      = k,
 			first     = #anims.frames+1,
-			last      = #anims.frames+1+#animation.frame,
+			last      = #anims.frames+#animation.frame,
 			framerate = animation.framerate,
 			loop      = animation.loop or false
 		}
@@ -793,7 +658,9 @@ function IQE:dump()
 end
 
 function IQE:calc_bounds()
+	local cpml  = require "cpml"
 	self.bounds = { min = {}, max = {} }
+
 	for _, buffer in ipairs(self.vertex_buffer) do
 		local b = buffer.bounds
 		self.bounds.min.x = self.bounds.min.x and math.min(self.bounds.min.x, b.min.x) or b.min.x

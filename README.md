@@ -1,18 +1,15 @@
-# Lua IQE
+# Inter-Quake Export Loader
 
-Lua IQE is a library for parsing Inter-Quake Export files into Lua data structures. Lua IQE can also load Wavefront Material files.
+Inter-Quake Export Loader is a library for parsing Inter-Quake Export files into Lua data structures.
 
 Buffering models is supported using the [**LÖVE**][LOVE] game framework.
-
 
 ## Quick Example
 
 ```lua
-local iqe = require "iqe"
-local model = iqe.load("some_model.iqe")
-iqe.load("some_materials.mtl", model)
+local iqe   = require "iqe"
+local model = iqe.load("foo.iqe")
 ```
-
 
 ## License
 
